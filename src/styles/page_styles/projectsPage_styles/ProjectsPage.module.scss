@@ -1,2 +1,72 @@
 @use "../../globals.scss" as *;
 
+.projectsMainContainer {
+    margin-top: 2rem;
+    width: 100%;
+    padding-inline: 4em;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2rem;
+
+    .projectContainer {
+        position: relative;
+        width: 100%;
+        gap: 5rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        text-align: start;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid white;
+        background: rgba($color: #000000, $alpha: 0.2);
+        overflow: hidden;
+
+        &:last-child {
+            justify-content: center !important;
+        }
+
+        div {
+            min-width: 10rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            align-items: center;
+            font-weight: 500;
+            font-size: 1.25rem;
+
+            .descriptionText {
+                font-size: 0.75rem;
+                font-weight: 300;
+            }
+        }
+    }
+}
+
+
+@media (max-width:768px) {
+
+    .authButton {
+        padding: 0.25rem 1rem;
+        border-radius: 0.25rem;
+        font-size: 1rem;
+    }
+
+    .signUpButton {
+        border: 1px solid rgb(129, 129, 129);
+    }
+}
+
+@media (max-width:430px) {
+
+    .authButton {
+        padding: 0.25rem 1rem;
+        border-radius: 0.25rem;
+        font-size: 0.6rem;
+    }
+
+    .signUpButton {
+        border: 1px solid rgb(129, 129, 129);
+    }
+}

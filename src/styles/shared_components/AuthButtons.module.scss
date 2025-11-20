@@ -3,9 +3,9 @@
 .authButton {
     outline: none;
     border: none;
-    padding: 0.25rem 1rem;
+    padding: 0.5rem 1.5rem;
     border-radius: 0.25rem;
-    font-size: 0.6rem;
+    font-size: 1.25rem;
 }
 
 .signUpButton {
@@ -20,4 +20,30 @@
 
 .logoutButton {
     background: none;
+}
+
+@media (max-width:768px) {
+
+    .authButton {
+        padding: 0.25rem 1rem;
+        border-radius: 0.25rem;
+        font-size: 1rem;
+    }
+
+    .signUpButton {
+        border: 1px solid rgb(129, 129, 129);
+    }
+}
+
+@media (max-width:430px) {
+
+    .authButton {
+        padding: 0.25rem 1rem;
+        border-radius: 0.25rem;
+        font-size: 0.6rem;
+    }
+
+    .signUpButton {
+        border: 1px solid rgb(129, 129, 129);
+    }
 }
