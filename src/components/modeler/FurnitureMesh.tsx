@@ -4,26 +4,41 @@ import React, { useMemo, useState } from "react";
 import * as THREE from "three";
 import { Edges, Html } from "@react-three/drei";
 
+export interface SelectedDivision {
+  unitId: string;
+  type: "shelf" | "partition" | "drawer";
+  index?: number;
+  colIndex?: number;
+}
+
+export type MaterialPreset = "oak" | "walnut" | "plywood" | "blackSteel" | "whiteStudio";
+
 export interface KitchenCabinetUnit {
   id: string;
   name: string;
-  type: "base" | "wall"; // base floor unit vs wall/upper suspended unit
-  width: number;  // mm (e.g. 600)
+  type: "base" | "wall" | "corner-base"; // base floor unit vs wall/upper suspended unit vs 90° corner base
+  orientation?: "straight" | "corner-right" | "corner-left"; // orientation & turn direction
+  materialType?: MaterialPreset; // individual cabinet material override
+  doorOpenPercent?: number; // individual door open state (0-100%)
+  doorStyle?: "slab" | "shaker" | "glass";
+  hasBackPanel?: boolean;
+  width: number;  // mm (e.g. 600 or 900 for corner)
   height: number; // mm (e.g. 720)
-  depth: number;  // mm (e.g. 600 for base, 350 for wall)
-  doorType: "none" | "singleLeft" | "singleRight" | "double" | "flipUp";
+  depth: number;  // mm (e.g. 600 or 900 for corner, 350 for wall)
+  doorType: "none" | "singleLeft" | "singleRight" | "double" | "flipUp" | "cornerDouble";
   drawerCount: number; // 0, 1, 2, 3, 4
   drawerHeightsMode?: "equal" | "standard" | "custom";
   drawerHeights?: number[]; // mm for each drawer, e.g. [140, 280, 280]
   internalShelves: number;
-  handleType: "bar" | "knob" | "edgePull" | "cutout" | "hidden";
+  handleType: "bar" | "knob" | "edgePull" | "cutout" | "hidden" | "cncJProfile";
   handleFinish: "black" | "steel" | "brass";
 }
 
 export interface WardrobeUnit {
   id: string;
   name: string;
-  type: "main" | "top"; // main wardrobe bay vs top overhead unit
+  type: "main" | "top";
+  materialType?: MaterialPreset; // main wardrobe bay vs top overhead unit
   width: number; // mm
   height: number; // mm
   depth: number; // mm
@@ -47,13 +62,40 @@ export interface WardrobeUnit {
   hasInternalDivider?: boolean;
 
   // Handles & Hardware
-  handleType?: "bar" | "knob" | "edgePull" | "cutout" | "hidden";
+  handleType?: "bar" | "knob" | "edgePull" | "cutout" | "hidden" | "cncJProfile";
   handleFinish?: "black" | "steel" | "brass";
+}
+
+export interface TechnicalDrawingSettings {
+  drawingTitle?: string;
+  clientName?: string;
+  designer?: string;
+  drawingNumber?: string;
+  revision?: string;
+  status?: string;
+  notes?: string;
+  pageSize?: "A3" | "A4";
+  orientation?: "landscape" | "portrait";
+  scaleMode?: "auto" | "1:10" | "1:15" | "1:20" | "1:25" | "1:50" | "custom";
+  customScale?: number;
+  showDimensions?: boolean;
+  isoAngle?: number; // degrees (0-360), default 45
+  isoElevation?: number; // degrees (15-45), default 30
+  unit?: "mm" | "cm"; // drawing dimension unit (default "mm")
+  viewTitles?: {
+    top?: string;
+    front?: string;
+    side?: string;
+    iso?: string;
+  };
 }
 
 export interface FurnitureParams {
   name: string;
   category: "Table" | "Shelf" | "Cabinet" | "Wardrobe" | "Desk" | "Custom";
+  activeTool?: "select" | "select-division" | "box-select" | "add-base" | "add-v-division" | "add-h-division";
+  selectedUnitIds?: string[];
+  onSelectUnits?: (ids: string[]) => void;
   width: number;  // mm (e.g. 1200)
   height: number; // mm (e.g. 750)
   depth: number;  // mm (e.g. 600)
@@ -61,8 +103,13 @@ export interface FurnitureParams {
   showDimensions?: boolean;
   wireframe?: boolean;
 
+  // 2D Technical Drawing Settings
+  drawingSettings?: TechnicalDrawingSettings;
+
   // Board & Construction Specs
-  boardThickness?: number; // mm (e.g. 18, 25, 30, 40)
+  boardThickness?: number; // mm (default 18mm)
+  tableTopThickness?: number; // mm (for table/desk top board thickness, default 18mm)
+  apronHeight?: number; // mm (height/width of apron rail, default 65mm)
   hasBackPanel?: boolean;  // solid back panel or open back
   topOverhang?: number;    // mm (tabletop overhang beyond apron, can be 0)
 
@@ -92,13 +139,18 @@ export interface FurnitureParams {
   doorStyle?: "slab" | "shaker" | "glass";
 
   // Handles & Hardware
-  handleType?: "bar" | "knob" | "edgePull" | "cutout" | "hidden";
+  handleType?: "bar" | "knob" | "edgePull" | "cutout" | "hidden" | "cncJProfile";
   handleFinish?: "black" | "steel" | "brass";
 
   // Internal Divisions & Shelving
   internalColumns?: number; // 1 to 5 vertical dividers
   internalShelves?: number; // 1 to 6 horizontal shelves
   shelfLayout?: "grid" | "staggered";
+  shelfColumnOffsets?: number[]; // mm offset for each vertical divider column
+  shelfRowOffsets?: number[];    // mm offset for each horizontal shelf tier
+  selectedDivision?: SelectedDivision | null;
+  onSelectDivision?: (div: SelectedDivision | null) => void;
+  onRemoveDivision?: (div: SelectedDivision) => void;
 
   // Kitchen Cabinet Assembly Multi-Unit System
   kitchenUnits?: KitchenCabinetUnit[];
@@ -111,15 +163,20 @@ export interface FurnitureParams {
   selectedWardrobeUnitId?: string;
   onSelectWardrobeUnit?: (id: string) => void;
   onAddAdjacentWardrobeUnit?: (sourceId: string, direction: "left" | "right" | "top") => void;
+  onAddDivision?: (unitId: string, type: "vertical" | "horizontal") => void;
 }
 
 interface FurnitureMeshProps {
   params: FurnitureParams;
   groupRef: React.RefObject<THREE.Group | null>;
   onSelectUnit?: (id: string) => void;
+  onSelectUnits?: (ids: string[]) => void;
   onAddAdjacentUnit?: (sourceId: string, direction: "left" | "right" | "top") => void;
   onSelectWardrobeUnit?: (id: string) => void;
   onAddAdjacentWardrobeUnit?: (sourceId: string, direction: "left" | "right" | "top") => void;
+  onAddDivision?: (unitId: string, type: "vertical" | "horizontal") => void;
+  onSelectDivision?: (div: SelectedDivision | null) => void;
+  onRemoveDivision?: (div: SelectedDivision) => void;
 }
 
 const MATERIAL_PRESETS = {
@@ -161,14 +218,28 @@ const HANDLE_FINISHES = {
   brass: { color: "#eab308", metalness: 0.8, roughness: 0.3 },
 };
 
+
+let hoverCabinetTimer: ReturnType<typeof setTimeout> | null = null;
+let hoverWardrobeTimer: ReturnType<typeof setTimeout> | null = null;
+
 export default function FurnitureMesh({
   params,
   groupRef,
   onSelectUnit,
+  onSelectUnits: propOnSelectUnits,
   onAddAdjacentUnit,
   onSelectWardrobeUnit,
   onAddAdjacentWardrobeUnit,
+  onAddDivision,
+  onSelectDivision: propOnSelectDivision,
+  onRemoveDivision: propOnRemoveDivision,
 }: FurnitureMeshProps) {
+  const onSelectDivision = propOnSelectDivision || params.onSelectDivision;
+  const onRemoveDivision = propOnRemoveDivision || params.onRemoveDivision;
+  const selectedDivision = params.selectedDivision;
+  const activeTool = params.activeTool || "select";
+  const onSelectUnits = propOnSelectUnits || params.onSelectUnits;
+  const [hoveredSnap, setHoveredSnap] = useState<{ unitId: string; side: "left" | "right" } | null>(null);
   const {
     width,
     height,
@@ -177,7 +248,9 @@ export default function FurnitureMesh({
     materialType,
     showDimensions,
     wireframe,
-    boardThickness = category === "Table" || category === "Desk" ? 30 : 18,
+    boardThickness = 18,
+    tableTopThickness = 18,
+    apronHeight = 65,
     topOverhang = 25,
     hasBackPanel = category === "Cabinet",
     baseType = category === "Cabinet" ? "plinth" : "legs",
@@ -193,20 +266,50 @@ export default function FurnitureMesh({
     hasDrawers = category === "Desk",
     drawerCount = 1,
     drawerOpenPercent = 0,
-        doorOpenPercent = 0,
+    doorOpenPercent = 0,
     handleType = "bar",
     handleFinish = "black",
     internalColumns = 1,
     internalShelves = category === "Shelf" ? 3 : 2,
     shelfLayout = "grid",
+    shelfColumnOffsets,
+    shelfRowOffsets,
     kitchenUnits,
     selectedUnitId,
     wardrobeUnits,
     selectedWardrobeUnitId,
   } = params;
 
+  const selectedUnitIds = params.selectedUnitIds && params.selectedUnitIds.length > 0
+    ? params.selectedUnitIds
+    : (selectedUnitId ? [selectedUnitId] : []);
+
   const [hoveredUnit, setHoveredUnit] = useState<string | null>(null);
   const [hoveredWardrobeUnit, setHoveredWardrobeUnit] = useState<string | null>(null);
+  const handleHoverCabinet = (id: string) => {
+    if (hoverCabinetTimer) clearTimeout(hoverCabinetTimer);
+    setHoveredUnit(id);
+  };
+
+  const handleLeaveCabinet = () => {
+    if (hoverCabinetTimer) clearTimeout(hoverCabinetTimer);
+    hoverCabinetTimer = setTimeout(() => {
+      setHoveredUnit(null);
+    }, 450);
+  };
+
+  const handleHoverWardrobe = (id: string) => {
+    if (hoverWardrobeTimer) clearTimeout(hoverWardrobeTimer);
+    setHoveredWardrobeUnit(id);
+  };
+
+  const handleLeaveWardrobe = () => {
+    if (hoverWardrobeTimer) clearTimeout(hoverWardrobeTimer);
+    hoverWardrobeTimer = setTimeout(() => {
+      setHoveredWardrobeUnit(null);
+    }, 450);
+  };
+
 
   // Convert mm to meters for Three.js units (1 unit = 1 meter = 1000mm)
   const w = width / 1000;
@@ -223,10 +326,36 @@ export default function FurnitureMesh({
         color: matConfig.color,
         roughness: matConfig.roughness,
         metalness: matConfig.metalness,
-        wireframe: Boolean(wireframe),
+        wireframe: false,
+        transparent: Boolean(wireframe),
+        opacity: wireframe ? 0.08 : 1.0,
+        depthWrite: !wireframe,
       }),
     [matConfig, wireframe]
   );
+
+  const materialsPresetMap = useMemo(() => {
+    const map: Record<string, THREE.MeshStandardMaterial> = {};
+    for (const [key, cfg] of Object.entries(MATERIAL_PRESETS)) {
+      map[key] = new THREE.MeshStandardMaterial({
+        color: cfg.color,
+        roughness: cfg.roughness,
+        metalness: cfg.metalness,
+        wireframe: false,
+        transparent: Boolean(wireframe),
+        opacity: wireframe ? 0.08 : 1.0,
+        depthWrite: !wireframe,
+      });
+    }
+    return map;
+  }, [wireframe]);
+
+  const getUnitMaterial = (unitMat?: MaterialPreset) => {
+    if (unitMat && materialsPresetMap[unitMat]) {
+      return materialsPresetMap[unitMat];
+    }
+    return mainMaterial;
+  };
 
   const handleMaterial = useMemo(
     () =>
@@ -234,11 +363,13 @@ export default function FurnitureMesh({
         color: handleConfig.color,
         roughness: handleConfig.roughness,
         metalness: handleConfig.metalness,
+        transparent: Boolean(wireframe),
+        opacity: wireframe ? 0.2 : 1.0,
       }),
-    [handleConfig]
+    [handleConfig, wireframe]
   );
 
-  const edgeColor = wireframe ? "#2972f5" : "#1a1c23";
+  const edgeColor = wireframe ? "#38bdf8" : "#1a1c23";
 
   const mirrorMaterial = useMemo(
     () =>
@@ -246,7 +377,10 @@ export default function FurnitureMesh({
         color: "#d8e2ec",
         roughness: 0.04,
         metalness: 0.96,
-        wireframe: Boolean(wireframe),
+        wireframe: false,
+        transparent: Boolean(wireframe),
+        opacity: wireframe ? 0.08 : 1.0,
+        depthWrite: !wireframe,
       }),
     [wireframe]
   );
@@ -257,10 +391,83 @@ export default function FurnitureMesh({
         color: "#e2e8f0",
         roughness: 0.15,
         metalness: 0.92,
-        wireframe: Boolean(wireframe),
+        wireframe: false,
+        transparent: Boolean(wireframe),
+        opacity: wireframe ? 0.08 : 1.0,
+        depthWrite: !wireframe,
       }),
     [wireframe]
   );
+
+  // Integrated CNC Milled J-Profile Door Geometry (Continuous Single Geometry)
+  const createCncMilledJProfileGeometry = useMemo(() => {
+    return (width: number, height: number, thickness: number, invertY: boolean = false) => {
+      const T = Math.max(0.012, thickness);
+      const H = height;
+      const W = width;
+
+      const shape = new THREE.Shape();
+      const lipThick = Math.min(0.007, T * 0.38);
+      const pocketDepth = Math.min(0.026, H * 0.15); // 26mm deep finger recess
+      const rearHeight = H - pocketDepth + 0.005;
+
+      // Profile in (thickness, height) space
+      shape.moveTo(0, 0); // bottom rear
+      shape.lineTo(0, rearHeight); // up rear face
+      shape.lineTo(T - lipThick - 0.004, rearHeight); // step into finger channel
+      shape.lineTo(T - lipThick - 0.004, H - pocketDepth); // channel bottom
+      shape.lineTo(T - lipThick, H - pocketDepth); // across bottom of recess
+      shape.lineTo(T - lipThick, H); // up inner wall of lip
+      shape.lineTo(T, H); // top of front lip
+      shape.lineTo(T, 0); // front face down to bottom
+      shape.closePath();
+
+      const geom = new THREE.ExtrudeGeometry(shape, {
+        steps: 1,
+        depth: W,
+        bevelEnabled: false,
+      });
+
+      geom.rotateY(-Math.PI / 2);
+      if (invertY) {
+        geom.rotateX(Math.PI);
+      }
+      geom.center();
+      geom.computeVertexNormals();
+      return geom;
+    };
+  }, []);
+
+  const CncDoorMesh = ({
+    width: dw,
+    height: dh,
+    thickness: dt = 0.018,
+    material: dmat,
+    edgeColor: dec,
+    isSelected: dis,
+    invertY: diy = false,
+    position: dpos = [0, 0, 0],
+  }: {
+    width: number;
+    height: number;
+    thickness?: number;
+    material: THREE.Material;
+    edgeColor: string;
+    isSelected?: boolean;
+    invertY?: boolean;
+    position?: [number, number, number];
+  }) => {
+    const geom = useMemo(
+      () => createCncMilledJProfileGeometry(dw, dh, dt, diy),
+      [dw, dh, dt, diy]
+    );
+
+    return (
+      <mesh position={dpos} geometry={geom} material={dmat} castShadow receiveShadow>
+        <Edges threshold={15} color={dis ? "#60a5fa" : dec} />
+      </mesh>
+    );
+  };
 
   // Reusable Hardware Handle Renderer
   const renderHandle = (
@@ -270,7 +477,7 @@ export default function FurnitureMesh({
     hType: FurnitureParams["handleType"] = handleType,
     hFinish: FurnitureParams["handleFinish"] = handleFinish
   ) => {
-    if (hType === "hidden") return null;
+    if (hType === "hidden" || hType === "cncJProfile") return null;
 
     const specificHandleMat =
       hFinish === handleFinish
@@ -350,11 +557,12 @@ export default function FurnitureMesh({
 
   // 1. TABLE / DESK RENDERER
   const renderTable = () => {
-    // FIX 1: Allow topOverhang to be 0! Using ?? instead of ||
+    // Top Board Thickness option (independent of legs / apron)
+    const topT = Math.max(0.012, (tableTopThickness ?? 25) / 1000);
     const oHang = (topOverhang ?? 25) / 1000;
     const legThick = (legThickness / 1000) || 0.05;
     const legIns = (legInset / 1000) || 0.025;
-    const legH = Math.max(0.1, h - t);
+    const legH = Math.max(0.1, h - topT);
 
     const cornerX = w / 2 - oHang - legIns - legThick / 2;
     const cornerZ = d / 2 - oHang - legIns - legThick / 2;
@@ -372,14 +580,14 @@ export default function FurnitureMesh({
 
     return (
       <group>
-        {/* Tabletop resting flush at y = h - t/2 */}
+        {/* Tabletop resting flush at y = h - topT/2 */}
         <mesh
-          position={[0, h - t / 2, 0]}
+          position={[0, h - topT / 2, 0]}
           castShadow
           receiveShadow
           material={mainMaterial}
         >
-          <boxGeometry args={[w, t, d]} />
+          <boxGeometry args={[w, topT, d]} />
           <Edges threshold={15} color={edgeColor} />
         </mesh>
 
@@ -478,7 +686,7 @@ export default function FurnitureMesh({
                     </mesh>
                     {/* Top Mounting Plate */}
                     <mesh
-                      position={[tx, h - t - 0.02, 0]}
+                      position={[tx, h - topT - 0.02, 0]}
                       castShadow
                       material={mainMaterial}
                     >
@@ -548,19 +756,19 @@ export default function FurnitureMesh({
             {[-cornerX, cornerX].map((ax, axi) => (
               <mesh
                 key={`sideApron-${axi}`}
-                position={[ax > 0 ? ax - legThick / 2 : ax + legThick / 2, h - t - drawerH / 2, 0]}
+                position={[ax > 0 ? ax - legThick / 2 : ax + legThick / 2, h - topT - drawerH / 2, 0]}
                 material={mainMaterial}
               >
-                <boxGeometry args={[0.02, drawerH, cornerZ * 2]} />
+                <boxGeometry args={[t, drawerH, cornerZ * 2]} />
                 <Edges threshold={15} color={edgeColor} />
               </mesh>
             ))}
             {/* Back Apron Rail */}
             <mesh
-              position={[0, h - t - drawerH / 2, -cornerZ]}
+              position={[0, h - topT - drawerH / 2, -cornerZ]}
               material={mainMaterial}
             >
-              <boxGeometry args={[cornerX * 2, drawerH, 0.02]} />
+              <boxGeometry args={[cornerX * 2, drawerH, t]} />
               <Edges threshold={15} color={edgeColor} />
             </mesh>
 
@@ -571,7 +779,7 @@ export default function FurnitureMesh({
               const dWidth = drawerSpan / totalDrawers - 0.015;
               const dCenterX =
                 -cornerX + 0.01 + dWidth / 2 + di * (dWidth + 0.015);
-              const drawerY = h - t - drawerH / 2;
+              const drawerY = h - topT - drawerH / 2;
 
               return (
                 <group
@@ -611,44 +819,48 @@ export default function FurnitureMesh({
             })}
           </group>
         ) : (
-          !isPedestal && legType !== "trestle" && (
-            <group>
-              <mesh
-                position={[0, h - t - 0.035, cornerZ]}
-                material={mainMaterial}
-              >
-                <boxGeometry args={[cornerX * 2, 0.06, 0.02]} />
-                <Edges threshold={15} color={edgeColor} />
-              </mesh>
-              <mesh
-                position={[0, h - t - 0.035, -cornerZ]}
-                material={mainMaterial}
-              >
-                <boxGeometry args={[cornerX * 2, 0.06, 0.02]} />
-                <Edges threshold={15} color={edgeColor} />
-              </mesh>
-              <mesh
-                position={[cornerX, h - t - 0.035, 0]}
-                material={mainMaterial}
-              >
-                <boxGeometry args={[0.02, 0.06, cornerZ * 2]} />
-                <Edges threshold={15} color={edgeColor} />
-              </mesh>
-              <mesh
-                position={[-cornerX, h - t - 0.035, 0]}
-                material={mainMaterial}
-              >
-                <boxGeometry args={[0.02, 0.06, cornerZ * 2]} />
-                <Edges threshold={15} color={edgeColor} />
-              </mesh>
-            </group>
-          )
+          !isPedestal && legType !== "trestle" && (() => {
+            const apronH = Math.max(0.03, (apronHeight ?? 65) / 1000);
+            const apronY = h - topT - apronH / 2;
+            return (
+              <group>
+                <mesh
+                  position={[0, apronY, cornerZ]}
+                  material={mainMaterial}
+                >
+                  <boxGeometry args={[cornerX * 2, apronH, t]} />
+                  <Edges threshold={15} color={edgeColor} />
+                </mesh>
+                <mesh
+                  position={[0, apronY, -cornerZ]}
+                  material={mainMaterial}
+                >
+                  <boxGeometry args={[cornerX * 2, apronH, t]} />
+                  <Edges threshold={15} color={edgeColor} />
+                </mesh>
+                <mesh
+                  position={[cornerX, apronY, 0]}
+                  material={mainMaterial}
+                >
+                  <boxGeometry args={[t, apronH, cornerZ * 2]} />
+                  <Edges threshold={15} color={edgeColor} />
+                </mesh>
+                <mesh
+                  position={[-cornerX, apronY, 0]}
+                  material={mainMaterial}
+                >
+                  <boxGeometry args={[t, apronH, cornerZ * 2]} />
+                  <Edges threshold={15} color={edgeColor} />
+                </mesh>
+              </group>
+            );
+          })()
         )}
       </group>
     );
   };
 
-  // 2. MODULAR KITCHEN CABINET SYSTEM RENDERER
+  // 2. MODULAR KITCHEN CABINET SYSTEM RENDERER (Supports L-Shaped Layout, Corner Base & Per-Cabinet Materials)
   const renderKitchenCabinetSystem = () => {
     // Default units if none defined
     const units: KitchenCabinetUnit[] = kitchenUnits && kitchenUnits.length > 0 ? kitchenUnits : [
@@ -706,313 +918,871 @@ export default function FurnitureMesh({
       },
     ];
 
-    const baseUnits = units.filter((u) => u.type === "base");
+    const baseUnits = units.filter((u) => u.type === "base" || u.type === "corner-base");
     const wallUnits = units.filter((u) => u.type === "wall");
-
-    const totalBaseW = baseUnits.reduce((acc, u) => acc + u.width / 1000, 0);
-    const totalWallW = wallUnits.reduce((acc, u) => acc + u.width / 1000, 0);
-
-    const baseStartLeftX = -totalBaseW / 2;
-    const wallStartLeftX = -totalWallW / 2;
 
     const plinthH = baseType === "floating" ? 0 : plinthHeight / 1000;
     const plinthRec = plinthRecess / 1000;
+    const globalAngleRad = ((doorOpenPercent || 0) / 100) * ((85 * Math.PI) / 180);
 
-    const angleRad = ((doorOpenPercent || 0) / 100) * (Math.PI / 2);
+    const D_STD = 0.60; // Standard 600mm base cabinet depth
+
+    // -------------------------------------------------------------
+    // BASE CABINETS RUN LAYOUT (Supports Linear & 90° L-Shaped Runs)
+    // -------------------------------------------------------------
+    interface BaseLayoutItem {
+      unit: KitchenCabinetUnit;
+      pos: [number, number, number];
+      rotY: number;
+      uW: number;
+      uH: number;
+      uD: number;
+      isCorner: boolean;
+      runIndex: number; // 0 = straight along X, 1 = turned along Z
+    }
+
+    const layoutBaseItems: BaseLayoutItem[] = [];
+    let curRun = 0;
+    let cursorX = 0;
+    let cursorZ = 0;
+    let cornerOuterX = 0;
+    let cornerOuterZ = -D_STD / 2;
+
+    for (let i = 0; i < baseUnits.length; i++) {
+      const u = baseUnits[i];
+      const isCorner = u.type === "corner-base" || u.orientation === "corner-right" || u.orientation === "corner-left";
+      const uW = u.width / 1000;
+      const uH = u.height / 1000;
+      const uD = isCorner ? (u.depth ? u.depth / 1000 : 0.9) : (u.depth ? u.depth / 1000 : D_STD);
+
+      if (!isCorner && curRun === 0) {
+        // Straight unit on primary run (along X, facing +Z)
+        const cx = cursorX + uW / 2;
+        const cz = 0;
+        cursorX += uW;
+        layoutBaseItems.push({
+          unit: u,
+          pos: [cx, plinthH, cz],
+          rotY: 0,
+          uW,
+          uH,
+          uD: D_STD,
+          isCorner: false,
+          runIndex: 0,
+        });
+      } else if (isCorner) {
+        // 90° L-Corner unit placed at end of Run 0
+        const cornerW = uW || 0.9;
+        const cornerD = uD || 0.9;
+        cornerOuterX = cursorX + cornerW;
+        cornerOuterZ = -D_STD / 2;
+
+        const cx = cursorX + cornerW / 2;
+        const cz = cornerOuterZ + cornerD / 2;
+
+        layoutBaseItems.push({
+          unit: u,
+          pos: [cx, plinthH, cz],
+          rotY: 0,
+          uW: cornerW,
+          uH,
+          uD: cornerD,
+          isCorner: true,
+          runIndex: 0,
+        });
+
+        // Switch next cabinets to Run 1 (along +Z)
+        curRun = 1;
+        cursorZ = cornerOuterZ + cornerD;
+      } else if (!isCorner && curRun === 1) {
+        // Straight unit on turned Run 1 (along +Z, facing -X into room)
+        const cz = cursorZ + uW / 2;
+        cursorZ += uW;
+        const cx = cornerOuterX - D_STD / 2;
+
+        layoutBaseItems.push({
+          unit: u,
+          pos: [cx, plinthH, cz],
+          rotY: -Math.PI / 2,
+          uW,
+          uH,
+          uD: D_STD,
+          isCorner: false,
+          runIndex: 1,
+        });
+      }
+    }
+
+    // Centering calculation: offset entire run so visual center is at (0, 0, 0)
+    let bMinX = Infinity, bMaxX = -Infinity, bMinZ = Infinity, bMaxZ = -Infinity;
+    for (const item of layoutBaseItems) {
+      if (item.isCorner) {
+        bMinX = Math.min(bMinX, item.pos[0] - item.uW / 2);
+        bMaxX = Math.max(bMaxX, item.pos[0] + item.uW / 2);
+        bMinZ = Math.min(bMinZ, item.pos[2] - item.uD / 2);
+        bMaxZ = Math.max(bMaxZ, item.pos[2] + item.uD / 2);
+      } else if (item.runIndex === 0) {
+        bMinX = Math.min(bMinX, item.pos[0] - item.uW / 2);
+        bMaxX = Math.max(bMaxX, item.pos[0] + item.uW / 2);
+        bMinZ = Math.min(bMinZ, item.pos[2] - item.uD / 2);
+        bMaxZ = Math.max(bMaxZ, item.pos[2] + item.uD / 2);
+      } else {
+        bMinX = Math.min(bMinX, item.pos[0] - item.uD / 2);
+        bMaxX = Math.max(bMaxX, item.pos[0] + item.uD / 2);
+        bMinZ = Math.min(bMinZ, item.pos[2] - item.uW / 2);
+        bMaxZ = Math.max(bMaxZ, item.pos[2] + item.uW / 2);
+      }
+    }
+    if (!isFinite(bMinX)) { bMinX = 0; bMaxX = 0; bMinZ = 0; bMaxZ = 0; }
+    const centerOffX = (bMinX + bMaxX) / 2;
+    const centerOffZ = (bMinZ + bMaxZ) / 2;
+
+    // Apply centering offset to base items
+    const centeredBaseItems = layoutBaseItems.map((item) => ({
+      ...item,
+      pos: [item.pos[0] - centerOffX, item.pos[1], item.pos[2] - centerOffZ] as [number, number, number],
+    }));
+
+    // Multi-Selection helper handler
+    const handleUnitSelect = (e: { stopPropagation: () => void; shiftKey?: boolean }, unitId: string) => {
+      e.stopPropagation();
+      if (e.shiftKey) {
+        const cur = selectedUnitIds;
+        const next = cur.includes(unitId)
+          ? cur.filter((id) => id !== unitId)
+          : [...cur, unitId];
+        const finalIds = next.length > 0 ? next : [unitId];
+        if (onSelectUnits) {
+          onSelectUnits(finalIds);
+        } else {
+          onSelectUnit?.(finalIds[finalIds.length - 1]);
+        }
+      } else {
+        if (onSelectUnits) {
+          onSelectUnits([unitId]);
+        } else {
+          onSelectUnit?.(unitId);
+        }
+      }
+    };
+
+    // -------------------------------------------------------------
+    // UPPER WALL UNITS LAYOUT
+    // -------------------------------------------------------------
+    const totalWallW = wallUnits.reduce((acc, u) => acc + u.width / 1000, 0);
+    const wallStartLeftX = -totalWallW / 2;
+    const wallY = plinthH + 0.72 + 0.55;
 
     return (
       <group>
-        {/* Continuous Plinth across all base cabinets touching floor at y = 0 */}
-        {baseUnits.length > 0 && baseType === "plinth" && plinthH > 0 && (
+        {/* Continuous Plinth Boards Underneath */}
+        {centeredBaseItems.length > 0 && plinthH > 0 && baseType === "plinth" && (
           <group>
-            {/* Front continuous plinth board */}
-            <mesh
-              position={[0, plinthH / 2, 0.3 - plinthRec]}
-              castShadow
-              material={mainMaterial}
-            >
-              <boxGeometry args={[totalBaseW - 0.02, plinthH, 0.018]} />
-              <Edges threshold={15} color={edgeColor} />
-            </mesh>
-            {/* Side returns */}
-            {[-totalBaseW / 2 + 0.01, totalBaseW / 2 - 0.01].map((px, pi) => (
-              <mesh
-                key={`plinthSide-${pi}`}
-                position={[px, plinthH / 2, 0.3 - plinthRec - (0.6 - plinthRec) / 2]}
-                material={mainMaterial}
-              >
-                <boxGeometry args={[0.018, plinthH, 0.6 - plinthRec - 0.02]} />
-              </mesh>
-            ))}
+            {centeredBaseItems.map((item, bi) => {
+              const uMat = getUnitMaterial(item.unit.materialType);
+              if (item.isCorner) {
+                // L-Corner Plinth
+                const w1 = item.uW - D_STD + 0.04;
+                const d1 = item.uD - D_STD + 0.04;
+                return (
+                  <group key={`corPlinth-${bi}`} position={item.pos}>
+                    <mesh position={[-item.uW / 2 + (item.uW - D_STD) / 2, -plinthH / 2, -item.uD / 2 + D_STD - plinthRec]} material={uMat}>
+                      <boxGeometry args={[w1, plinthH, 0.018]} />
+                      <Edges threshold={15} color={edgeColor} />
+                    </mesh>
+                    <mesh position={[item.uW / 2 - D_STD + plinthRec, -plinthH / 2, item.uD / 2 - (item.uD - D_STD) / 2]} material={uMat}>
+                      <boxGeometry args={[0.018, plinthH, d1]} />
+                      <Edges threshold={15} color={edgeColor} />
+                    </mesh>
+                  </group>
+                );
+              } else if (item.runIndex === 0) {
+                // Plinth along Run 0
+                return (
+                  <mesh
+                    key={`plinthRun0-${bi}`}
+                    position={[item.pos[0], plinthH / 2, item.pos[2] + D_STD / 2 - plinthRec]}
+                    material={uMat}
+                    castShadow
+                  >
+                    <boxGeometry args={[item.uW - 0.005, plinthH, 0.018]} />
+                    <Edges threshold={15} color={edgeColor} />
+                  </mesh>
+                );
+              } else {
+                // Plinth along Run 1 (facing -X)
+                return (
+                  <mesh
+                    key={`plinthRun1-${bi}`}
+                    position={[item.pos[0] - D_STD / 2 + plinthRec, plinthH / 2, item.pos[2]]}
+                    material={uMat}
+                    castShadow
+                  >
+                    <boxGeometry args={[0.018, plinthH, item.uW - 0.005]} />
+                    <Edges threshold={15} color={edgeColor} />
+                  </mesh>
+                );
+              }
+            })}
           </group>
         )}
 
-        {/* Render Base Cabinets */}
-        {(() => {
-          let currX = baseStartLeftX;
-          return baseUnits.map((unit) => {
-            const uW = unit.width / 1000;
-            const uH = unit.height / 1000;
-            const uD = unit.depth / 1000;
-            const centerX = currX + uW / 2;
-            currX += uW;
+        {/* Corner Feet / Legs Mode */}
+        {centeredBaseItems.length > 0 && plinthH > 0 && baseType === "legs" && (
+          <group>
+            {centeredBaseItems.map((item, bi) => {
+              const uW = item.uW;
+              const uD = item.uD;
+              const legInsetX = 0.045;
+              const legInsetZFront = plinthRec + 0.02;
+              const legInsetZBack = 0.045;
+              const legPositions: [number, number][] = [
+                [-uW / 2 + legInsetX, uD / 2 - legInsetZFront],
+                [uW / 2 - legInsetX, uD / 2 - legInsetZFront],
+                [-uW / 2 + legInsetX, -uD / 2 + legInsetZBack],
+                [uW / 2 - legInsetX, -uD / 2 + legInsetZBack],
+              ];
+              return (
+                <group key={`legs-${bi}`} position={item.pos} rotation={[0, item.rotY, 0]}>
+                  {legPositions.map(([lx, lz], li) => (
+                    <group key={`leg-${bi}-${li}`} position={[lx, -plinthH, lz]}>
+                      <mesh position={[0, plinthH / 2, 0]} material={chromeMaterial} castShadow>
+                        <cylinderGeometry args={[0.02, 0.02, plinthH, 16]} />
+                      </mesh>
+                      <mesh position={[0, 0.005, 0]} material={chromeMaterial}>
+                        <cylinderGeometry args={[0.026, 0.026, 0.01, 16]} />
+                      </mesh>
+                    </group>
+                  ))}
+                </group>
+              );
+            })}
+          </group>
+        )}
 
-            const isSelected = selectedUnitId === unit.id;
-            const isHovered = hoveredUnit === unit.id;
-            const innerH = uH - t * 2;
-            const innerD = uD - 0.02;
+        {/* ------------------------------------------------------------- */}
+        {/* RENDER ALL BASE CABINET UNITS (Straight & L-Corner)           */}
+        {/* ------------------------------------------------------------- */}
+        {centeredBaseItems.map((item, ui) => {
+          const { unit, pos, rotY, uW, uH, uD, isCorner } = item;
+          const uMat = getUnitMaterial(unit.materialType);
+          const isSelected = selectedUnitIds.includes(unit.id);
+          const isHovered = hoveredUnit === unit.id;
+          const unitDoorAngle = unit.doorOpenPercent !== undefined
+            ? ((unit.doorOpenPercent) / 100) * ((85 * Math.PI) / 180)
+            : globalAngleRad;
 
-            // Uneven Drawer Heights Calculation
-            let drawerHeightsArr: number[] = [];
-            if (unit.drawerCount > 0) {
-              if (unit.drawerHeights && unit.drawerHeights.length === unit.drawerCount) {
-                drawerHeightsArr = unit.drawerHeights.map((dh) => dh / 1000);
-              } else if (unit.drawerHeightsMode === "standard" && unit.drawerCount === 3) {
-                drawerHeightsArr = [0.14, (innerH - 0.14) / 2, (innerH - 0.14) / 2];
-              } else {
-                drawerHeightsArr = Array(unit.drawerCount).fill(innerH / unit.drawerCount);
-              }
+          const innerH = uH - t * 2;
+          const innerD = uD - 0.02;
+
+          // Uneven Drawer Heights Calculation
+          let drawerHeightsArr: number[] = [];
+          if (unit.drawerCount > 0) {
+            if (unit.drawerHeights && unit.drawerHeights.length === unit.drawerCount) {
+              drawerHeightsArr = unit.drawerHeights.map((dh) => dh / 1000);
+            } else if (unit.drawerHeightsMode === "standard" && unit.drawerCount === 3) {
+              drawerHeightsArr = [0.14, (innerH - 0.14) / 2, (innerH - 0.14) / 2];
+            } else {
+              drawerHeightsArr = Array(unit.drawerCount).fill(innerH / unit.drawerCount);
             }
+          }
 
+          if (isCorner) {
+            // =========================================================
+            // 90° CORNER BASE CABINET RENDERER
+            // =========================================================
             return (
               <group
                 key={unit.id}
-                position={[centerX, plinthH, 0]}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelectUnit?.(unit.id);
-                }}
+                userData={{ unitId: unit.id, unitName: unit.name }}
+                position={pos}
+                rotation={[0, rotY, 0]}
+                onClick={(e) => handleUnitSelect(e, unit.id)}
                 onPointerOver={(e) => {
                   e.stopPropagation();
-                  setHoveredUnit(unit.id);
+                  handleHoverCabinet(unit.id);
                 }}
                 onPointerOut={(e) => {
                   e.stopPropagation();
-                  if (hoveredUnit === unit.id) setHoveredUnit(null);
+                  handleLeaveCabinet();
                 }}
               >
-                {/* Active Selection Outline Highlight */}
+                {/* Active Multi-Selection Bounding Wireframe & Glow */}
                 {isSelected && (
                   <mesh position={[0, uH / 2, 0]}>
-                    <boxGeometry args={[uW + 0.01, uH + 0.01, uD + 0.01]} />
+                    <boxGeometry args={[uW + 0.015, uH + 0.015, uD + 0.015]} />
                     <Edges threshold={1} color="#38bdf8" />
-                    <meshBasicMaterial color="#38bdf8" transparent opacity={0.06} />
+                    <meshBasicMaterial color="#38bdf8" transparent opacity={0.08} />
                   </mesh>
                 )}
 
-                {/* Carcase Panels */}
-                {/* Top */}
-                <mesh position={[0, uH - t / 2, 0]} material={mainMaterial} castShadow>
-                  <boxGeometry args={[uW, t, uD]} />
+                {/* Multi-Selection Badge Tag */}
+                {isSelected && selectedUnitIds.length > 1 && (
+                  <Html position={[0, uH + 0.08, 0]} center>
+                    <span style={{
+                      background: "rgba(2, 132, 199, 0.95)",
+                      color: "#fff",
+                      padding: "2px 7px",
+                      borderRadius: "4px",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
+                      whiteSpace: "nowrap",
+                    }}>
+                      ✓ {unit.name}
+                    </span>
+                  </Html>
+                )}
+
+                {/* Carcase Panels - L-Shaped Bottom */}
+                <mesh position={[0, t / 2, -uD / 2 + D_STD / 2]} material={uMat} castShadow>
+                  <boxGeometry args={[uW, t, D_STD]} />
                   <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
                 </mesh>
-                {/* Bottom */}
-                <mesh position={[0, t / 2, 0]} material={mainMaterial} castShadow>
-                  <boxGeometry args={[uW, t, uD]} />
+                <mesh position={[uW / 2 - D_STD / 2, t / 2, -uD / 2 + D_STD + (uD - D_STD) / 2]} material={uMat} castShadow>
+                  <boxGeometry args={[D_STD, t, uD - D_STD]} />
                   <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
                 </mesh>
-                {/* Left */}
-                <mesh position={[-uW / 2 + t / 2, uH / 2, 0]} material={mainMaterial} castShadow>
-                  <boxGeometry args={[t, uH - t * 2, uD]} />
+
+                {/* Carcase Panels - Top Stretchers / Countertop Support */}
+                <mesh position={[0, uH - t / 2, -uD / 2 + D_STD / 2]} material={uMat} castShadow>
+                  <boxGeometry args={[uW, t, D_STD]} />
                   <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
                 </mesh>
-                {/* Right */}
-                <mesh position={[uW / 2 - t / 2, uH / 2, 0]} material={mainMaterial} castShadow>
-                  <boxGeometry args={[t, uH - t * 2, uD]} />
+                <mesh position={[uW / 2 - D_STD / 2, uH - t / 2, -uD / 2 + D_STD + (uD - D_STD) / 2]} material={uMat} castShadow>
+                  <boxGeometry args={[D_STD, t, uD - D_STD]} />
                   <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
                 </mesh>
-                {/* Back */}
-                {hasBackPanel && (
-                  <mesh position={[0, uH / 2, -uD / 2 + 0.005]} material={mainMaterial}>
+
+                {/* Outer Left Side End (Joint to Run 0) */}
+                <mesh position={[-uW / 2 + t / 2, uH / 2, -uD / 2 + D_STD / 2]} material={uMat} castShadow>
+                  <boxGeometry args={[t, uH - t * 2, D_STD]} />
+                  <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+                </mesh>
+
+                {/* Outer Turned Side End (Joint to Run 1) */}
+                <mesh position={[uW / 2 - D_STD / 2, uH / 2, uD / 2 - t / 2]} material={uMat} castShadow>
+                  <boxGeometry args={[D_STD, uH - t * 2, t]} />
+                  <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+                </mesh>
+
+                {/* Solid Back Wall 1 (along X) */}
+                {(unit.hasBackPanel !== false) && (
+                  <mesh position={[0, uH / 2, -uD / 2 + 0.005]} material={uMat}>
                     <boxGeometry args={[uW - t * 2, uH - t * 2, 0.01]} />
                     <Edges threshold={15} color={edgeColor} />
                   </mesh>
                 )}
 
-                {/* Internal Shelves */}
-                {unit.drawerCount === 0 &&
-                  Array.from({ length: unit.internalShelves || 2 }).map((_, si) => {
-                    const shelfSpacing = innerH / ((unit.internalShelves || 2) + 1);
-                    const shelfY = t + (si + 1) * shelfSpacing;
-                    return (
-                      <mesh key={`shelf-${si}`} position={[0, shelfY, 0]} material={mainMaterial}>
-                        <boxGeometry args={[uW - t * 2, t, innerD * 0.95]} />
-                        <Edges threshold={15} color={edgeColor} />
-                      </mesh>
-                    );
-                  })}
+                {/* Solid Back Wall 2 (along Z) */}
+                {(unit.hasBackPanel !== false) && (
+                  <mesh position={[uW / 2 - 0.005, uH / 2, 0]} material={uMat}>
+                    <boxGeometry args={[0.01, uH - t * 2, uD - t * 2]} />
+                    <Edges threshold={15} color={edgeColor} />
+                  </mesh>
+                )}
 
-                {/* Uneven Drawers */}
-                {unit.drawerCount > 0 &&
-                  (() => {
-                    let accY = t;
-                    const slideDist = ((drawerOpenPercent || 0) / 100) * (uD * 0.6);
-
-                    return drawerHeightsArr.map((dh, dxi) => {
-                      const centerY = accY + dh / 2;
-                      accY += dh;
-
-                      return (
-                        <group
-                          key={`unevenDrawer-${dxi}`}
-                          position={[0, centerY, uD / 2 + slideDist]}
-                        >
-                          <mesh material={mainMaterial} castShadow>
-                            <boxGeometry args={[uW - 0.008, dh - 0.006, 0.018]} />
-                            <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
-                          </mesh>
-                          {/* Box */}
-                          <mesh
-                            position={[0, -dh / 2 + 0.005, -innerD * 0.4]}
-                            material={mainMaterial}
-                          >
-                            <boxGeometry args={[uW - t * 2 - 0.02, 0.01, innerD * 0.8]} />
-                          </mesh>
-                          {renderHandle([0, 0, 0.01], false, 0, unit.handleType, unit.handleFinish)}
-                        </group>
-                      );
-                    });
-                  })()}
-
-                {/* Doors */}
-                {unit.drawerCount === 0 && unit.doorType !== "none" && (
-                  <group>
-                    {unit.doorType === "singleLeft" ? (
-                      <group position={[-uW / 2, uH / 2, uD / 2]} rotation={[0, -angleRad, 0]}>
-                        <mesh position={[uW / 2, 0, 0.009]} material={mainMaterial} castShadow>
-                          <boxGeometry args={[uW - 0.004, innerH, 0.018]} />
-                          <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
-                        </mesh>
-                        {renderHandle([uW - 0.04, 0, 0.02], true, 0, unit.handleType, unit.handleFinish)}
-                      </group>
-                    ) : unit.doorType === "singleRight" ? (
-                      <group position={[uW / 2, uH / 2, uD / 2]} rotation={[0, angleRad, 0]}>
-                        <mesh position={[-uW / 2, 0, 0.009]} material={mainMaterial} castShadow>
-                          <boxGeometry args={[uW - 0.004, innerH, 0.018]} />
-                          <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
-                        </mesh>
-                        {renderHandle([-uW + 0.04, 0, 0.02], true, 0, unit.handleType, unit.handleFinish)}
-                      </group>
-                    ) : unit.doorType === "flipUp" ? (
-                      <group position={[0, uH - t, uD / 2]} rotation={[-angleRad, 0, 0]}>
-                        <mesh position={[0, -innerH / 2, 0.009]} material={mainMaterial} castShadow>
-                          <boxGeometry args={[uW - 0.004, innerH, 0.018]} />
-                          <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
-                        </mesh>
-                        {renderHandle([0, -innerH + 0.04, 0.02], false, 0, unit.handleType, unit.handleFinish)}
-                      </group>
-                    ) : (
-                      // Double Doors
-                      <group>
-                        <group position={[-uW / 2, uH / 2, uD / 2]} rotation={[0, -angleRad, 0]}>
-                          <mesh position={[uW / 4, 0, 0.009]} material={mainMaterial} castShadow>
-                            <boxGeometry args={[uW / 2 - 0.003, innerH, 0.018]} />
-                            <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
-                          </mesh>
-                          {renderHandle([uW / 2 - 0.035, 0, 0.02], true, 0, unit.handleType, unit.handleFinish)}
-                        </group>
-                        <group position={[uW / 2, uH / 2, uD / 2]} rotation={[0, angleRad, 0]}>
-                          <mesh position={[-uW / 4, 0, 0.009]} material={mainMaterial} castShadow>
-                            <boxGeometry args={[uW / 2 - 0.003, innerH, 0.018]} />
-                            <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
-                          </mesh>
-                          {renderHandle([-uW / 2 + 0.035, 0, 0.02], true, 0, unit.handleType, unit.handleFinish)}
-                        </group>
-                      </group>
-                    )}
+                {/* Internal L-Corner Shelf */}
+                {unit.internalShelves > 0 && (
+                  <group position={[0, uH / 2, 0]}>
+                    <mesh position={[0, 0, -uD / 2 + D_STD / 2]} material={uMat}>
+                      <boxGeometry args={[uW - t * 2, t, D_STD - 0.03]} />
+                      <Edges threshold={15} color={edgeColor} />
+                    </mesh>
+                    <mesh position={[uW / 2 - D_STD / 2, 0, -uD / 2 + D_STD + (uD - D_STD) / 2]} material={uMat}>
+                      <boxGeometry args={[D_STD - 0.03, t, uD - D_STD - 0.01]} />
+                      <Edges threshold={15} color={edgeColor} />
+                    </mesh>
                   </group>
                 )}
 
-                {/* Hover Add Adjacent Unit CAD Snap Buttons */}
-                {isHovered && (
+                {/* Corner Doors: 2 Doors Meeting at the Inside Corner */}
+                {unit.doorType !== "none" && (
                   <group>
-                    {/* Add Right Button */}
-                    <Html position={[uW / 2 + 0.04, uH / 2, 0]} center>
-                      <button
-                        type="button"
+                    {/* Door 1: Facing +Z (hinged at left) */}
+                    <group
+                      position={[-uW / 2 + t, uH / 2, -uD / 2 + D_STD + 0.009]}
+                      rotation={[0, -unitDoorAngle, 0]}
+                    >
+                      <mesh position={[(uW - D_STD - 0.008) / 2, 0, 0]} material={uMat} castShadow>
+                        <boxGeometry args={[uW - D_STD - 0.008, innerH, 0.018]} />
+                        <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
+                      </mesh>
+                      {renderHandle([uW - D_STD - 0.035, innerH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish)}
+                    </group>
+
+                    {/* Door 2: Facing -X (hinged at turned top) */}
+                    <group
+                      position={[uW / 2 - D_STD - 0.009, uH / 2, uD / 2 - t]}
+                      rotation={[0, unitDoorAngle, 0]}
+                    >
+                      <mesh position={[0, 0, -(uD - D_STD - 0.008) / 2]} material={uMat} castShadow>
+                        <boxGeometry args={[0.018, innerH, uD - D_STD - 0.008]} />
+                        <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
+                      </mesh>
+                      {renderHandle([-0.02, innerH * 0.25, -(uD - D_STD - 0.035)], true, 0, unit.handleType, unit.handleFinish)}
+                    </group>
+                  </group>
+                )}
+
+                {/* Hover Action: Continue Run 1 along Turned Z */}
+                {activeTool === "add-base" && isHovered && (
+                  <group position={[uW / 2 - D_STD / 2, uH / 2, uD / 2 + 0.08]}>
+                    <Html center>
+                      <div
                         onClick={(e) => {
                           e.stopPropagation();
                           onAddAdjacentUnit?.(unit.id, "right");
                         }}
                         style={{
-                          background: "#2972f5",
+                          background: "linear-gradient(135deg, #10b981, #059669)",
                           color: "#fff",
-                          border: "none",
-                          borderRadius: "4px",
-                          padding: "2px 6px",
+                          padding: "5px 11px",
+                          borderRadius: "6px",
                           fontSize: "11px",
                           fontWeight: 700,
                           cursor: "pointer",
-                          boxShadow: "0 2px 8px rgba(0,0,0,0.6)",
+                          boxShadow: "0 4px 14px rgba(16,185,129,0.7)",
+                          border: "1px solid rgba(255,255,255,0.4)",
                           whiteSpace: "nowrap",
                         }}
-                        title="Add adjacent Base Cabinet to the right"
                       >
-                        + Right
-                      </button>
-                    </Html>
-                    {/* Add Left Button */}
-                    <Html position={[-uW / 2 - 0.04, uH / 2, 0]} center>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onAddAdjacentUnit?.(unit.id, "left");
-                        }}
-                        style={{
-                          background: "#2972f5",
-                          color: "#fff",
-                          border: "none",
-                          borderRadius: "4px",
-                          padding: "2px 6px",
-                          fontSize: "11px",
-                          fontWeight: 700,
-                          cursor: "pointer",
-                          boxShadow: "0 2px 8px rgba(0,0,0,0.6)",
-                          whiteSpace: "nowrap",
-                        }}
-                        title="Add adjacent Base Cabinet to the left"
-                      >
-                        + Left
-                      </button>
-                    </Html>
-                    {/* Add Wall Unit on top */}
-                    <Html position={[0, uH + 0.05, 0]} center>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onAddAdjacentUnit?.(unit.id, "top");
-                        }}
-                        style={{
-                          background: "#10b981",
-                          color: "#fff",
-                          border: "none",
-                          borderRadius: "4px",
-                          padding: "2px 6px",
-                          fontSize: "11px",
-                          fontWeight: 700,
-                          cursor: "pointer",
-                          boxShadow: "0 2px 8px rgba(0,0,0,0.6)",
-                          whiteSpace: "nowrap",
-                        }}
-                        title="Add Upper Wall Cabinet above this unit"
-                      >
-                        + Wall Unit
-                      </button>
+                        ➕ Click to Place Base on Turned Run
+                      </div>
                     </Html>
                   </group>
                 )}
               </group>
             );
-          });
-        })()}
+          }
 
-        {/* Render Upper Wall Cabinets (Suspended above base units) */}
+          // =========================================================
+          // STRAIGHT BASE CABINET RENDERER
+          // =========================================================
+          const prevItem = centeredBaseItems[ui - 1];
+          const nextItem = centeredBaseItems[ui + 1];
+
+          let effectiveAngle = unitDoorAngle;
+          if (prevItem && !prevItem.isCorner && unit.doorType === "singleLeft" && prevItem.unit.doorType !== "none" && unitDoorAngle > 0) {
+            effectiveAngle = Math.min(unitDoorAngle, (75 * Math.PI) / 180);
+          }
+          if (nextItem && !nextItem.isCorner && unit.doorType === "singleRight" && nextItem.unit.doorType !== "none" && unitDoorAngle > 0) {
+            effectiveAngle = Math.min(unitDoorAngle, (75 * Math.PI) / 180);
+          }
+
+          return (
+            <group
+              key={unit.id}
+              userData={{ unitId: unit.id, unitName: unit.name }}
+              position={pos}
+              rotation={[0, rotY, 0]}
+              onClick={(e) => handleUnitSelect(e, unit.id)}
+              onPointerOver={(e) => {
+                e.stopPropagation();
+                handleHoverCabinet(unit.id);
+              }}
+              onPointerOut={(e) => {
+                e.stopPropagation();
+                handleLeaveCabinet();
+              }}
+            >
+              {/* Active Selection Outline Highlight */}
+              {isSelected && (
+                <mesh position={[0, uH / 2, 0]}>
+                  <boxGeometry args={[uW + 0.015, uH + 0.015, uD + 0.015]} />
+                  <Edges threshold={1} color="#38bdf8" />
+                  <meshBasicMaterial color="#38bdf8" transparent opacity={0.08} />
+                </mesh>
+              )}
+
+              {/* Multi-Selection Badge Tag */}
+              {isSelected && selectedUnitIds.length > 1 && (
+                <Html position={[0, uH + 0.08, 0]} center>
+                  <span style={{
+                    background: "rgba(2, 132, 199, 0.95)",
+                    color: "#fff",
+                    padding: "2px 7px",
+                    borderRadius: "4px",
+                    fontSize: "10px",
+                    fontWeight: 700,
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
+                    whiteSpace: "nowrap",
+                  }}>
+                    ✓ {unit.name}
+                  </span>
+                </Html>
+              )}
+
+              {/* Carcase Panels */}
+              {/* Top */}
+              <mesh position={[0, uH - t / 2, 0]} material={uMat} castShadow>
+                <boxGeometry args={[uW, t, uD]} />
+                <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+              </mesh>
+              {/* Bottom */}
+              <mesh position={[0, t / 2, 0]} material={uMat} castShadow>
+                <boxGeometry args={[uW, t, uD]} />
+                <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+              </mesh>
+              {/* Left */}
+              <mesh position={[-uW / 2 + t / 2, uH / 2, 0]} material={uMat} castShadow>
+                <boxGeometry args={[t, uH - t * 2, uD]} />
+                <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+              </mesh>
+              {/* Right */}
+              <mesh position={[uW / 2 - t / 2, uH / 2, 0]} material={uMat} castShadow>
+                <boxGeometry args={[t, uH - t * 2, uD]} />
+                <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+              </mesh>
+              {/* Back */}
+              {(unit.hasBackPanel !== false) && (
+                <mesh position={[0, uH / 2, -uD / 2 + 0.005]} material={uMat}>
+                  <boxGeometry args={[uW - t * 2, uH - t * 2, 0.01]} />
+                  <Edges threshold={15} color={edgeColor} />
+                </mesh>
+              )}
+
+              {/* Internal Shelves */}
+              {unit.drawerCount === 0 && (unit.internalShelves ?? 0) > 0 &&
+                Array.from({ length: unit.internalShelves ?? 0 }).map((_, si) => {
+                  const count = unit.internalShelves ?? 0;
+                  const shelfSpacing = innerH / (count + 1);
+                  const shelfY = t + (si + 1) * shelfSpacing;
+                  const isDivSelected =
+                    selectedDivision?.unitId === unit.id &&
+                    selectedDivision?.type === "shelf" &&
+                    selectedDivision?.index === si;
+
+                  return (
+                    <group key={`shelf-${si}`} position={[0, shelfY, 0]}>
+                      <mesh
+                        material={uMat}
+                        onClick={(e) => {
+                          if (activeTool === "select-division") {
+                            e.stopPropagation();
+                            onSelectDivision?.({ unitId: unit.id, type: "shelf", index: si });
+                          }
+                        }}
+                        onPointerOver={(e) => {
+                          if (activeTool === "select-division") {
+                            e.stopPropagation();
+                            document.body.style.cursor = "pointer";
+                          }
+                        }}
+                        onPointerOut={() => {
+                          document.body.style.cursor = "default";
+                        }}
+                      >
+                        <boxGeometry args={[uW - t * 2, t, innerD * 0.95]} />
+                        <Edges threshold={15} color={isDivSelected ? "#f59e0b" : edgeColor} />
+                        {isDivSelected && (
+                          <meshBasicMaterial color="#f59e0b" transparent opacity={0.35} />
+                        )}
+                      </mesh>
+                      {isDivSelected && (
+                        <Html position={[0, 0.04, innerD * 0.4]} center>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRemoveDivision?.({ unitId: unit.id, type: "shelf", index: si });
+                            }}
+                            style={{
+                              background: "linear-gradient(135deg, #ef4444, #dc2626)",
+                              color: "#fff",
+                              border: "1px solid rgba(255,255,255,0.4)",
+                              borderRadius: "5px",
+                              padding: "3px 8px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              boxShadow: "0 4px 12px rgba(220,38,38,0.6)",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            🗑️ Delete Shelf {si + 1}
+                          </button>
+                        </Html>
+                      )}
+                    </group>
+                  );
+                })}
+
+              {/* Uneven Drawers */}
+              {unit.drawerCount > 0 &&
+                (() => {
+                  let accY = t;
+                  const slideDist = ((drawerOpenPercent || 0) / 100) * (uD * 0.6);
+
+                  return drawerHeightsArr.map((dh, dxi) => {
+                    const centerY = accY + dh / 2;
+                    accY += dh;
+
+                    return (
+                      <group
+                        key={`unevenDrawer-${dxi}`}
+                        position={[0, centerY, uD / 2 + slideDist]}
+                      >
+                        {unit.handleType === "cncJProfile" ? (
+                          <CncDoorMesh
+                            width={uW - 0.008}
+                            height={dh - 0.006}
+                            thickness={0.018}
+                            material={uMat}
+                            edgeColor={isSelected ? "#60a5fa" : edgeColor}
+                          />
+                        ) : (
+                          <mesh material={uMat} castShadow>
+                            <boxGeometry args={[uW - 0.008, dh - 0.006, 0.018]} />
+                            <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
+                          </mesh>
+                        )}
+                        {/* Drawer pull handle */}
+                        {unit.handleType !== "cncJProfile" &&
+                          renderHandle([0, 0, 0.02], false, 0, unit.handleType, unit.handleFinish)}
+                      </group>
+                    );
+                  });
+                })()}
+
+              {/* Cabinet Hinged Doors */}
+              {unit.drawerCount === 0 && unit.doorType !== "none" && (
+                <group>
+                  {unit.doorType === "singleLeft" ? (
+                    <group
+                      position={[-uW / 2 + 0.004, uH / 2, uD / 2]}
+                      rotation={[0, -effectiveAngle, 0]}
+                    >
+                      {unit.handleType === "cncJProfile" ? (
+                        <CncDoorMesh
+                          width={uW - 0.008}
+                          height={innerH}
+                          thickness={0.018}
+                          material={uMat}
+                          edgeColor={isSelected ? "#60a5fa" : edgeColor}
+                          position={[(uW - 0.008) / 2, 0, 0.009]}
+                        />
+                      ) : (
+                        <mesh position={[(uW - 0.008) / 2, 0, 0.009]} material={uMat} castShadow>
+                          <boxGeometry args={[uW - 0.008, innerH, 0.018]} />
+                          <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
+                        </mesh>
+                      )}
+                      {renderHandle([uW - 0.04, innerH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish)}
+                    </group>
+                  ) : unit.doorType === "singleRight" ? (
+                    <group
+                      position={[uW / 2 - 0.004, uH / 2, uD / 2]}
+                      rotation={[0, effectiveAngle, 0]}
+                    >
+                      {unit.handleType === "cncJProfile" ? (
+                        <CncDoorMesh
+                          width={uW - 0.008}
+                          height={innerH}
+                          thickness={0.018}
+                          material={uMat}
+                          edgeColor={isSelected ? "#60a5fa" : edgeColor}
+                          position={[-(uW - 0.008) / 2, 0, 0.009]}
+                        />
+                      ) : (
+                        <mesh position={[-(uW - 0.008) / 2, 0, 0.009]} material={uMat} castShadow>
+                          <boxGeometry args={[uW - 0.008, innerH, 0.018]} />
+                          <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
+                        </mesh>
+                      )}
+                      {renderHandle([-uW + 0.04, innerH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish)}
+                    </group>
+                  ) : unit.doorType === "double" ? (
+                    <group>
+                      <group position={[-uW / 2 + 0.004, uH / 2, uD / 2]} rotation={[0, -effectiveAngle, 0]}>
+                        {unit.handleType === "cncJProfile" ? (
+                          <CncDoorMesh
+                            width={uW / 2 - 0.006}
+                            height={innerH}
+                            thickness={0.018}
+                            material={uMat}
+                            edgeColor={isSelected ? "#60a5fa" : edgeColor}
+                            position={[(uW / 2 - 0.006) / 2, 0, 0.009]}
+                          />
+                        ) : (
+                          <mesh position={[(uW / 2 - 0.006) / 2, 0, 0.009]} material={uMat} castShadow>
+                            <boxGeometry args={[uW / 2 - 0.006, innerH, 0.018]} />
+                            <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
+                          </mesh>
+                        )}
+                        {renderHandle([uW / 2 - 0.035, innerH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish)}
+                      </group>
+                      <group position={[uW / 2 - 0.004, uH / 2, uD / 2]} rotation={[0, effectiveAngle, 0]}>
+                        {unit.handleType === "cncJProfile" ? (
+                          <CncDoorMesh
+                            width={uW / 2 - 0.006}
+                            height={innerH}
+                            thickness={0.018}
+                            material={uMat}
+                            edgeColor={isSelected ? "#60a5fa" : edgeColor}
+                            position={[-(uW / 2 - 0.006) / 2, 0, 0.009]}
+                          />
+                        ) : (
+                          <mesh position={[-(uW / 2 - 0.006) / 2, 0, 0.009]} material={uMat} castShadow>
+                            <boxGeometry args={[uW / 2 - 0.006, innerH, 0.018]} />
+                            <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
+                          </mesh>
+                        )}
+                        {renderHandle([-uW / 2 + 0.035, innerH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish)}
+                      </group>
+                    </group>
+                  ) : null}
+                </group>
+              )}
+
+              {/* Add Adjacent Unit / Division Snapping on Hover */}
+              {activeTool === "add-base" && isHovered && (
+                <group>
+                  {/* Right Snap Detector (Continues current run) */}
+                  <group position={[uW / 2 + 0.04, uH / 2, 0]}>
+                    <mesh
+                      onPointerOver={(e) => { e.stopPropagation(); setHoveredSnap({ unitId: unit.id, side: "right" }); }}
+                      onPointerOut={(e) => { e.stopPropagation(); setHoveredSnap(null); }}
+                    >
+                      <boxGeometry args={[0.08, uH, uD]} />
+                      <meshBasicMaterial color="#38bdf8" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "right" ? 0.35 : 0.12} />
+                      <Edges threshold={1} color="#38bdf8" />
+                    </mesh>
+                    <Html position={[0, 0, uD / 2 + 0.04]} center>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                        <div
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onAddAdjacentUnit?.(unit.id, "right");
+                          }}
+                          style={{
+                            background: "#2972f5",
+                            color: "#fff",
+                            padding: "4px 9px",
+                            borderRadius: "5px",
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            boxShadow: "0 4px 14px rgba(41,114,245,0.7)",
+                            border: "1px solid rgba(255,255,255,0.3)",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          ➕ Add Base Right
+                        </div>
+                        {item.runIndex === 0 && !centeredBaseItems.some((b) => b.isCorner) && (
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAddAdjacentUnit?.(unit.id, "right"); // Will be converted or placed as corner
+                            }}
+                            style={{
+                              background: "linear-gradient(135deg, #10b981, #059669)",
+                              color: "#fff",
+                              padding: "4px 9px",
+                              borderRadius: "5px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              boxShadow: "0 4px 14px rgba(16,185,129,0.7)",
+                              border: "1px solid rgba(255,255,255,0.3)",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            🔄 Add 90° L-Turn
+                          </div>
+                        )}
+                      </div>
+                    </Html>
+                  </group>
+                </group>
+              )}
+
+              {/* Mode 2: Vertical Division on Hover */}
+              {activeTool === "add-v-division" && isHovered && (
+                <group>
+                  <mesh position={[0, uH / 2, 0]}>
+                    <boxGeometry args={[0.018, uH - t * 2, innerD]} />
+                    <meshBasicMaterial color="#38bdf8" transparent opacity={0.6} />
+                    <Edges threshold={1} color="#38bdf8" />
+                  </mesh>
+                  <Html position={[0, uH + 0.04, uD / 2]} center>
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddDivision?.(unit.id, "vertical");
+                      }}
+                      style={{
+                        background: "linear-gradient(135deg, #0284c7, #2563eb)",
+                        color: "#fff",
+                        padding: "4px 9px",
+                        borderRadius: "5px",
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        boxShadow: "0 4px 12px rgba(2,132,199,0.7)",
+                        border: "1px solid rgba(255,255,255,0.3)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      ➗ Click to Add Vertical Split
+                    </div>
+                  </Html>
+                </group>
+              )}
+
+              {/* Mode 3: Horizontal Division (Shelf) on Hover */}
+              {activeTool === "add-h-division" && isHovered && (
+                <group>
+                  {(() => {
+                    const nextCount = (unit.internalShelves ?? 0) + 1;
+                    const previewY = t + ((uH - t * 2) / (nextCount + 1)) * nextCount;
+                    return (
+                      <group position={[0, previewY, 0]}>
+                        <mesh>
+                          <boxGeometry args={[uW - t * 2, 0.018, innerD]} />
+                          <meshBasicMaterial color="#10b981" transparent opacity={0.6} />
+                          <Edges threshold={1} color="#10b981" />
+                        </mesh>
+                        <Html position={[0, 0.04, uD / 2]} center>
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAddDivision?.(unit.id, "horizontal");
+                            }}
+                            style={{
+                              background: "linear-gradient(135deg, #059669, #10b981)",
+                              color: "#fff",
+                              padding: "4px 9px",
+                              borderRadius: "5px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              boxShadow: "0 4px 12px rgba(16,185,129,0.7)",
+                              border: "1px solid rgba(255,255,255,0.3)",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            📚 Click to Add Shelf (#{nextCount})
+                          </div>
+                        </Html>
+                      </group>
+                    );
+                  })()}
+                </group>
+              )}
+            </group>
+          );
+        })}
+
+        {/* ------------------------------------------------------------- */}
+        {/* RENDER UPPER WALL CABINETS (With Individual Materials)        */}
+        {/* ------------------------------------------------------------- */}
         {(() => {
           let currX = wallStartLeftX;
-          // Standard kitchen wall cabinet height: bottom at plinthH + 0.72m (base) + 0.55m (backsplash clearance) = plinthH + 1.27m
-          const wallY = plinthH + 0.72 + 0.55;
 
           return wallUnits.map((unit) => {
             const uW = unit.width / 1000;
@@ -1020,22 +1790,22 @@ export default function FurnitureMesh({
             const uD = unit.depth / 1000;
             const centerX = currX + uW / 2;
             currX += uW;
-
-            // Flush back with back wall at Z = -0.3 + uD/2
             const centerZ = -0.3 + uD / 2;
 
-            const isSelected = selectedUnitId === unit.id;
+            const uMat = getUnitMaterial(unit.materialType);
+            const isSelected = selectedUnitIds.includes(unit.id);
             const isHovered = hoveredUnit === unit.id;
             const innerH = uH - t * 2;
+            const unitDoorAngle = unit.doorOpenPercent !== undefined
+              ? ((unit.doorOpenPercent) / 100) * ((85 * Math.PI) / 180)
+              : globalAngleRad;
 
             return (
               <group
                 key={unit.id}
+                userData={{ unitId: unit.id, unitName: unit.name }}
                 position={[centerX, wallY, centerZ]}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelectUnit?.(unit.id);
-                }}
+                onClick={(e) => handleUnitSelect(e, unit.id)}
                 onPointerOver={(e) => {
                   e.stopPropagation();
                   setHoveredUnit(unit.id);
@@ -1048,69 +1818,87 @@ export default function FurnitureMesh({
                 {/* Active Selection Outline Highlight */}
                 {isSelected && (
                   <mesh position={[0, uH / 2, 0]}>
-                    <boxGeometry args={[uW + 0.01, uH + 0.01, uD + 0.01]} />
+                    <boxGeometry args={[uW + 0.015, uH + 0.015, uD + 0.015]} />
                     <Edges threshold={1} color="#38bdf8" />
-                    <meshBasicMaterial color="#38bdf8" transparent opacity={0.06} />
+                    <meshBasicMaterial color="#38bdf8" transparent opacity={0.08} />
                   </mesh>
                 )}
 
+                {/* Multi-Selection Badge Tag */}
+                {isSelected && selectedUnitIds.length > 1 && (
+                  <Html position={[0, uH + 0.08, 0]} center>
+                    <span style={{
+                      background: "rgba(2, 132, 199, 0.95)",
+                      color: "#fff",
+                      padding: "2px 7px",
+                      borderRadius: "4px",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
+                      whiteSpace: "nowrap",
+                    }}>
+                      ✓ {unit.name}
+                    </span>
+                  </Html>
+                )}
+
                 {/* Wall Carcase Panels */}
-                <mesh position={[0, uH - t / 2, 0]} material={mainMaterial} castShadow>
+                <mesh position={[0, uH - t / 2, 0]} material={uMat} castShadow>
                   <boxGeometry args={[uW, t, uD]} />
                   <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
                 </mesh>
-                <mesh position={[0, t / 2, 0]} material={mainMaterial} castShadow>
+                <mesh position={[0, t / 2, 0]} material={uMat} castShadow>
                   <boxGeometry args={[uW, t, uD]} />
                   <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
                 </mesh>
-                <mesh position={[-uW / 2 + t / 2, uH / 2, 0]} material={mainMaterial} castShadow>
+                <mesh position={[-uW / 2 + t / 2, uH / 2, 0]} material={uMat} castShadow>
                   <boxGeometry args={[t, uH - t * 2, uD]} />
                   <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
                 </mesh>
-                <mesh position={[uW / 2 - t / 2, uH / 2, 0]} material={mainMaterial} castShadow>
+                <mesh position={[uW / 2 - t / 2, uH / 2, 0]} material={uMat} castShadow>
                   <boxGeometry args={[t, uH - t * 2, uD]} />
                   <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
                 </mesh>
-                <mesh position={[0, uH / 2, -uD / 2 + 0.005]} material={mainMaterial}>
+                <mesh position={[0, uH / 2, -uD / 2 + 0.005]} material={uMat}>
                   <boxGeometry args={[uW - t * 2, uH - t * 2, 0.01]} />
                   <Edges threshold={15} color={edgeColor} />
                 </mesh>
 
-                {/* Shelves */}
-                {Array.from({ length: unit.internalShelves || 2 }).map((_, si) => {
-                  const shelfSpacing = innerH / ((unit.internalShelves || 2) + 1);
-                  const shelfY = t + (si + 1) * shelfSpacing;
-                  return (
-                    <mesh key={`wallShelf-${si}`} position={[0, shelfY, 0]} material={mainMaterial}>
-                      <boxGeometry args={[uW - t * 2, t, uD * 0.95]} />
-                      <Edges threshold={15} color={edgeColor} />
-                    </mesh>
-                  );
-                })}
+                {/* Wall Internal Shelves */}
+                {unit.internalShelves > 0 &&
+                  Array.from({ length: unit.internalShelves }).map((_, si) => {
+                    const shelfSpacing = innerH / (unit.internalShelves + 1);
+                    return (
+                      <mesh key={`wallShelf-${si}`} position={[0, t + (si + 1) * shelfSpacing, 0]} material={uMat}>
+                        <boxGeometry args={[uW - t * 2, t, uD - 0.03]} />
+                        <Edges threshold={15} color={edgeColor} />
+                      </mesh>
+                    );
+                  })}
 
-                {/* Doors */}
+                {/* Wall Doors */}
                 {unit.doorType !== "none" && (
                   <group>
                     {unit.doorType === "singleLeft" ? (
-                      <group position={[-uW / 2, uH / 2, uD / 2]} rotation={[0, -angleRad, 0]}>
-                        <mesh position={[uW / 2, 0, 0.009]} material={mainMaterial} castShadow>
-                          <boxGeometry args={[uW - 0.004, innerH, 0.018]} />
+                      <group position={[-uW / 2 + 0.004, uH / 2, uD / 2]} rotation={[0, -unitDoorAngle, 0]}>
+                        <mesh position={[(uW - 0.008) / 2, 0, 0.009]} material={uMat} castShadow>
+                          <boxGeometry args={[uW - 0.008, innerH, 0.018]} />
                           <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
                         </mesh>
                         {renderHandle([uW - 0.04, -innerH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish)}
                       </group>
                     ) : unit.doorType === "singleRight" ? (
-                      <group position={[uW / 2, uH / 2, uD / 2]} rotation={[0, angleRad, 0]}>
-                        <mesh position={[-uW / 2, 0, 0.009]} material={mainMaterial} castShadow>
-                          <boxGeometry args={[uW - 0.004, innerH, 0.018]} />
+                      <group position={[uW / 2 - 0.004, uH / 2, uD / 2]} rotation={[0, unitDoorAngle, 0]}>
+                        <mesh position={[-(uW - 0.008) / 2, 0, 0.009]} material={uMat} castShadow>
+                          <boxGeometry args={[uW - 0.008, innerH, 0.018]} />
                           <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
                         </mesh>
                         {renderHandle([-uW + 0.04, -innerH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish)}
                       </group>
                     ) : unit.doorType === "flipUp" ? (
-                      <group position={[0, uH - t, uD / 2]} rotation={[-angleRad, 0, 0]}>
-                        <mesh position={[0, -innerH / 2, 0.009]} material={mainMaterial} castShadow>
-                          <boxGeometry args={[uW - 0.004, innerH, 0.018]} />
+                      <group position={[0, uH - 0.004, uD / 2]} rotation={[-unitDoorAngle, 0, 0]}>
+                        <mesh position={[0, -innerH / 2, 0.009]} material={uMat} castShadow>
+                          <boxGeometry args={[uW - 0.008, innerH, 0.018]} />
                           <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
                         </mesh>
                         {renderHandle([0, -innerH + 0.04, 0.02], false, 0, unit.handleType, unit.handleFinish)}
@@ -1118,16 +1906,16 @@ export default function FurnitureMesh({
                     ) : (
                       // Double Doors
                       <group>
-                        <group position={[-uW / 2, uH / 2, uD / 2]} rotation={[0, -angleRad, 0]}>
-                          <mesh position={[uW / 4, 0, 0.009]} material={mainMaterial} castShadow>
-                            <boxGeometry args={[uW / 2 - 0.003, innerH, 0.018]} />
+                        <group position={[-uW / 2 + 0.004, uH / 2, uD / 2]} rotation={[0, -unitDoorAngle, 0]}>
+                          <mesh position={[(uW / 2 - 0.006) / 2, 0, 0.009]} material={uMat} castShadow>
+                            <boxGeometry args={[uW / 2 - 0.006, innerH, 0.018]} />
                             <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
                           </mesh>
                           {renderHandle([uW / 2 - 0.035, -innerH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish)}
                         </group>
-                        <group position={[uW / 2, uH / 2, uD / 2]} rotation={[0, angleRad, 0]}>
-                          <mesh position={[-uW / 4, 0, 0.009]} material={mainMaterial} castShadow>
-                            <boxGeometry args={[uW / 2 - 0.003, innerH, 0.018]} />
+                        <group position={[uW / 2 - 0.004, uH / 2, uD / 2]} rotation={[0, unitDoorAngle, 0]}>
+                          <mesh position={[-(uW / 2 - 0.006) / 2, 0, 0.009]} material={uMat} castShadow>
+                            <boxGeometry args={[uW / 2 - 0.006, innerH, 0.018]} />
                             <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
                           </mesh>
                           {renderHandle([-uW / 2 + 0.035, -innerH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish)}
@@ -1197,11 +1985,10 @@ export default function FurnitureMesh({
       </group>
     );
   };
-
   // 3. SHELF RENDERER (Clean: No doors, no handles, consistent division layout)
   const renderShelf = () => {
     const cols = Math.max(1, Math.min(5, internalColumns || 2));
-    const rows = Math.max(1, Math.min(6, internalShelves || 3));
+    const rows = internalShelves === 0 ? 0 : Math.max(1, Math.min(6, internalShelves ?? 3));
     const bayW = (w - (cols + 1) * t) / cols;
 
     return (
@@ -1247,25 +2034,67 @@ export default function FurnitureMesh({
           <Edges threshold={15} color={edgeColor} />
         </mesh>
 
-        {/* Internal Vertical Divider Columns */}
+        {/* Internal Vertical Divider Columns (Interactive & Movable) */}
         {cols > 1 &&
           Array.from({ length: cols - 1 }).map((_, ci) => {
-            const divX = -w / 2 + t + (ci + 1) * (bayW + t) - t / 2;
+            const colOffset = (shelfColumnOffsets?.[ci] ?? 0) / 1000;
+            const baseDivX = -w / 2 + t + (ci + 1) * (bayW + t) - t / 2;
+            const divX = baseDivX + colOffset;
+            const isDivSelected =
+              selectedDivision?.unitId === "shelf" &&
+              selectedDivision?.type === "partition" &&
+              selectedDivision?.index === ci;
+
             return (
-              <mesh
-                key={`shelfCol-${ci}`}
-                position={[divX, h / 2, 0]}
-                castShadow
-                receiveShadow
-                material={mainMaterial}
-              >
-                <boxGeometry args={[t, h - t * 2, d]} />
-                <Edges threshold={15} color={edgeColor} />
-              </mesh>
+              <group key={`shelfCol-${ci}`}>
+                <mesh
+                  position={[divX, h / 2, 0]}
+                  castShadow
+                  receiveShadow
+                  material={mainMaterial}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectDivision?.({ unitId: "shelf", type: "partition", index: ci });
+                  }}
+                  onPointerOver={(e) => {
+                    e.stopPropagation();
+                    document.body.style.cursor = "pointer";
+                  }}
+                  onPointerOut={() => {
+                    document.body.style.cursor = "default";
+                  }}
+                >
+                  <boxGeometry args={[t, h - t * 2, d]} />
+                  <Edges threshold={15} color={isDivSelected ? "#f59e0b" : edgeColor} />
+                  {isDivSelected && (
+                    <meshBasicMaterial color="#f59e0b" transparent opacity={0.35} />
+                  )}
+                </mesh>
+                {isDivSelected && (
+                  <Html position={[divX, h / 2 + 0.12, d / 2 + 0.04]} center zIndexRange={[100, 0]}>
+                    <div
+                      style={{
+                        background: "rgba(14, 16, 22, 0.95)",
+                        border: "1px solid #f59e0b",
+                        borderRadius: "5px",
+                        padding: "3px 8px",
+                        color: "#fbbf24",
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        whiteSpace: "nowrap",
+                        boxShadow: "0 4px 15px rgba(0,0,0,0.6)",
+                        pointerEvents: "none",
+                      }}
+                    >
+                      Divider {ci + 1} ({Math.round(colOffset * 1000)}mm)
+                    </div>
+                  </Html>
+                )}
+              </group>
             );
           })}
 
-        {/* Horizontal Shelf Tiers per Column (Grid vs Staggered Asymmetrical) */}
+        {/* Horizontal Shelf Tiers per Column (Interactive & Movable) */}
         {Array.from({ length: cols }).map((_, ci) => {
           const colX = -w / 2 + t + bayW / 2 + ci * (bayW + t);
           const isOffset = shelfLayout === "staggered" && ci % 2 === 1;
@@ -1274,21 +2103,63 @@ export default function FurnitureMesh({
           return (
             <group key={`colShelves-${ci}`}>
               {Array.from({ length: rows }).map((_, ri) => {
-                const shelfY =
+                const rowOffset = (shelfRowOffsets?.[ri] ?? 0) / 1000;
+                const baseShelfY =
                   t + (ri + 1) * tierHeight + (isOffset ? tierHeight * 0.35 : 0);
-                if (shelfY >= h - t - 0.05) return null;
+                const shelfY = baseShelfY + rowOffset;
+                if (shelfY >= h - t - 0.03 || shelfY <= t + 0.03) return null;
+
+                const isDivSelected =
+                  selectedDivision?.unitId === "shelf" &&
+                  selectedDivision?.type === "shelf" &&
+                  selectedDivision?.index === ri;
 
                 return (
-                  <mesh
-                    key={`shelf-${ci}-${ri}`}
-                    position={[colX, shelfY, 0]}
-                    castShadow
-                    receiveShadow
-                    material={mainMaterial}
-                  >
-                    <boxGeometry args={[bayW, t, d]} />
-                    <Edges threshold={15} color={edgeColor} />
-                  </mesh>
+                  <group key={`shelf-${ci}-${ri}`}>
+                    <mesh
+                      position={[colX, shelfY, 0]}
+                      castShadow
+                      receiveShadow
+                      material={mainMaterial}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectDivision?.({ unitId: "shelf", type: "shelf", index: ri, colIndex: ci });
+                      }}
+                      onPointerOver={(e) => {
+                        e.stopPropagation();
+                        document.body.style.cursor = "pointer";
+                      }}
+                      onPointerOut={() => {
+                        document.body.style.cursor = "default";
+                      }}
+                    >
+                      <boxGeometry args={[bayW, t, d]} />
+                      <Edges threshold={15} color={isDivSelected ? "#f59e0b" : edgeColor} />
+                      {isDivSelected && (
+                        <meshBasicMaterial color="#f59e0b" transparent opacity={0.35} />
+                      )}
+                    </mesh>
+                    {isDivSelected && ci === 0 && (
+                      <Html position={[0, shelfY + 0.06, d / 2 + 0.04]} center zIndexRange={[100, 0]}>
+                        <div
+                          style={{
+                            background: "rgba(14, 16, 22, 0.95)",
+                            border: "1px solid #f59e0b",
+                            borderRadius: "5px",
+                            padding: "3px 8px",
+                            color: "#fbbf24",
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            whiteSpace: "nowrap",
+                            boxShadow: "0 4px 15px rgba(0,0,0,0.6)",
+                            pointerEvents: "none",
+                          }}
+                        >
+                          Shelf {ri + 1} ({Math.round(rowOffset * 1000)}mm)
+                        </div>
+                      </Html>
+                    )}
+                  </group>
                 );
               })}
             </group>
@@ -1393,34 +2264,73 @@ export default function FurnitureMesh({
     // Continuous plinth / toe kick spanning all main wardrobe divisions
     const totalMainW = mainUnits.reduce((acc, u) => acc + u.width / 1000, 0);
     const mainStartLeftX = -totalMainW / 2;
-    const plinthH = (plinthHeight ?? 80) / 1000;
+    const plinthH = baseType === "floating" ? 0 : (plinthHeight ?? 80) / 1000;
     const plinthRec = (plinthRecess ?? 30) / 1000;
     const wardrobeD = (depth || 600) / 1000;
 
     return (
       <group>
-        {/* Continuous Plinth Base at Y = 0 */}
+        {/* Wardrobe Base: Continuous Plinth / Corner Feet Base */}
         {mainUnits.length > 0 && plinthH > 0 && (
           <group>
-            {/* Front plinth fascia board */}
-            <mesh
-              position={[0, plinthH / 2, wardrobeD / 2 - plinthRec - 0.009]}
-              castShadow
-              material={mainMaterial}
-            >
-              <boxGeometry args={[totalMainW - 0.01, plinthH, 0.018]} />
-              <Edges threshold={15} color={edgeColor} />
-            </mesh>
-            {/* Side returns */}
-            {[-totalMainW / 2 + 0.009, totalMainW / 2 - 0.009].map((px, pi) => (
-              <mesh
-                key={`wardrobePlinthSide-${pi}`}
-                position={[px, plinthH / 2, -plinthRec / 2]}
-                material={mainMaterial}
-              >
-                <boxGeometry args={[0.018, plinthH, wardrobeD - plinthRec - 0.02]} />
-              </mesh>
-            ))}
+            {baseType === "plinth" ? (
+              <group>
+                {/* Front plinth fascia board */}
+                <mesh
+                  position={[0, plinthH / 2, wardrobeD / 2 - plinthRec - 0.009]}
+                  castShadow
+                  material={mainMaterial}
+                >
+                  <boxGeometry args={[totalMainW - 0.01, plinthH, 0.018]} />
+                  <Edges threshold={15} color={edgeColor} />
+                </mesh>
+                {/* Side returns */}
+                {[-totalMainW / 2 + 0.009, totalMainW / 2 - 0.009].map((px, pi) => (
+                  <mesh
+                    key={`wardrobePlinthSide-${pi}`}
+                    position={[px, plinthH / 2, -plinthRec / 2]}
+                    material={mainMaterial}
+                  >
+                    <boxGeometry args={[0.018, plinthH, wardrobeD - plinthRec - 0.02]} />
+                  </mesh>
+                ))}
+              </group>
+            ) : baseType === "legs" ? (
+              <group>
+                {(() => {
+                  let legRunX = mainStartLeftX;
+                  return mainUnits.map((u, ui) => {
+                    const uW = u.width / 1000;
+                    const uD = wardrobeD;
+                    const cx = legRunX + uW / 2;
+                    legRunX += uW;
+                    const legInsetX = 0.05;
+                    const legInsetZFront = plinthRec + 0.02;
+                    const legInsetZBack = 0.05;
+                    const legPositions: [number, number][] = [
+                      [-uW / 2 + legInsetX, uD / 2 - legInsetZFront],
+                      [uW / 2 - legInsetX, uD / 2 - legInsetZFront],
+                      [-uW / 2 + legInsetX, -uD / 2 + legInsetZBack],
+                      [uW / 2 - legInsetX, -uD / 2 + legInsetZBack],
+                    ];
+                    return (
+                      <group key={`wardLegs-${ui}`} position={[cx, 0, 0]}>
+                        {legPositions.map(([lx, lz], li) => (
+                          <group key={`wardLeg-${ui}-${li}`} position={[lx, 0, lz]}>
+                            <mesh position={[0, plinthH / 2, 0]} material={chromeMaterial} castShadow>
+                              <cylinderGeometry args={[0.022, 0.022, plinthH, 16]} />
+                            </mesh>
+                            <mesh position={[0, 0.005, 0]} material={chromeMaterial}>
+                              <cylinderGeometry args={[0.028, 0.028, 0.01, 16]} />
+                            </mesh>
+                          </group>
+                        ))}
+                      </group>
+                    );
+                  });
+                })()}
+              </group>
+            ) : null}
           </group>
         )}
 
@@ -1459,11 +2369,11 @@ export default function FurnitureMesh({
                 }}
                 onPointerOver={(e) => {
                   e.stopPropagation();
-                  setHoveredWardrobeUnit(unit.id);
+                  handleHoverWardrobe(unit.id);
                 }}
                 onPointerOut={(e) => {
                   e.stopPropagation();
-                  if (hoveredWardrobeUnit === unit.id) setHoveredWardrobeUnit(null);
+                  handleLeaveWardrobe();
                 }}
               >
                 {/* Active Selection Glow Box */}
@@ -1496,33 +2406,141 @@ export default function FurnitureMesh({
                   <boxGeometry args={[uW - t * 2, uH - t * 2, 0.008]} />
                 </mesh>
 
-                {/* Optional Internal Vertical Divider */}
-                {unit.hasInternalDivider && (
-                  <mesh position={[0, uH / 2, 0]} material={mainMaterial} castShadow>
-                    <boxGeometry args={[t, uH - t * 2, innerD]} />
-                    <Edges threshold={15} color={edgeColor} />
-                  </mesh>
-                )}
+                {/* Optional Internal Vertical Divider (Interactive) */}
+                {unit.hasInternalDivider && (() => {
+                  const isPartSelected =
+                    selectedDivision?.unitId === unit.id &&
+                    selectedDivision?.type === "partition";
+                  return (
+                    <group position={[0, uH / 2, 0]}>
+                      <mesh
+                        material={mainMaterial}
+                        castShadow
+                        onClick={(e) => {
+                          if (activeTool === "select-division") {
+                            e.stopPropagation();
+                            onSelectDivision?.({ unitId: unit.id, type: "partition", index: 0 });
+                          }
+                        }}
+                        onPointerOver={(e) => {
+                          if (activeTool === "select-division") {
+                            e.stopPropagation();
+                            document.body.style.cursor = "pointer";
+                          }
+                        }}
+                        onPointerOut={() => {
+                          document.body.style.cursor = "default";
+                        }}
+                      >
+                        <boxGeometry args={[t, uH - t * 2, innerD]} />
+                        <Edges threshold={15} color={isPartSelected ? "#f59e0b" : edgeColor} />
+                        {isPartSelected && (
+                          <meshBasicMaterial color="#f59e0b" transparent opacity={0.35} />
+                        )}
+                      </mesh>
+                      {isPartSelected && (
+                        <Html position={[0, 0.05, innerD * 0.4]} center>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRemoveDivision?.({ unitId: unit.id, type: "partition", index: 0 });
+                            }}
+                            style={{
+                              background: "linear-gradient(135deg, #ef4444, #dc2626)",
+                              color: "#fff",
+                              border: "1px solid rgba(255,255,255,0.4)",
+                              borderRadius: "5px",
+                              padding: "3px 8px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              boxShadow: "0 4px 12px rgba(220,38,38,0.6)",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            🗑️ Delete Partition
+                          </button>
+                        </Html>
+                      )}
+                    </group>
+                  );
+                })()}
 
-                {/* Internal Shelves */}
-                {unit.internalShelves > 0 && (
+                {/* Internal Shelves (Interactive in Division Mode) */}
+                {(unit.internalShelves ?? 0) > 0 && (
                   <group>
-                    {Array.from({ length: unit.internalShelves }).map((_, si) => {
+                    {Array.from({ length: unit.internalShelves ?? 0 }).map((_, si) => {
+                      const count = unit.internalShelves ?? 0;
                       const startY = t + totalDrawerHeight;
                       const availH = uH - t - startY;
-                      const shelfY = startY + (availH / (unit.internalShelves + 1)) * (si + 1);
+                      const shelfY = startY + (availH / (count + 1)) * (si + 1);
                       const shelfW = unit.hasInternalDivider ? (uW - t * 3) / 2 : (uW - t * 2);
                       const shelfX = unit.hasInternalDivider ? uW / 4 : 0;
+                      const isDivSelected =
+                        selectedDivision?.unitId === unit.id &&
+                        selectedDivision?.type === "shelf" &&
+                        selectedDivision?.index === si;
+
                       return (
-                        <mesh
-                          key={`wardrobeShelf-${si}`}
-                          position={[shelfX, shelfY, 0]}
-                          material={mainMaterial}
-                          castShadow
-                        >
-                          <boxGeometry args={[shelfW, t, innerD]} />
-                          <Edges threshold={15} color={edgeColor} />
-                        </mesh>
+                        <group key={`wardrobeShelf-${si}`} position={[shelfX, shelfY, 0]}>
+                          <mesh
+                            material={mainMaterial}
+                            castShadow
+                            onClick={(e) => {
+                              if (activeTool === "select-division") {
+                                e.stopPropagation();
+                                onSelectDivision?.({ unitId: unit.id, type: "shelf", index: si });
+                              }
+                            }}
+                            onPointerOver={(e) => {
+                              if (activeTool === "select-division") {
+                                e.stopPropagation();
+                                document.body.style.cursor = "pointer";
+                              }
+                            }}
+                            onPointerOut={() => {
+                              document.body.style.cursor = "default";
+                            }}
+                          >
+                            <boxGeometry args={[shelfW, t, innerD]} />
+                            <Edges threshold={15} color={isDivSelected ? "#f59e0b" : edgeColor} />
+                            {isDivSelected && (
+                              <meshBasicMaterial color="#f59e0b" transparent opacity={0.35} />
+                            )}
+                          </mesh>
+                          {isDivSelected && (
+                            <Html position={[0, 0.04, innerD * 0.4]} center>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onRemoveDivision?.({ unitId: unit.id, type: "shelf", index: si });
+                                }}
+                                style={{
+                                  background: "linear-gradient(135deg, #ef4444, #dc2626)",
+                                  color: "#fff",
+                                  border: "1px solid rgba(255,255,255,0.4)",
+                                  borderRadius: "5px",
+                                  padding: "3px 8px",
+                                  fontSize: "11px",
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                  boxShadow: "0 4px 12px rgba(220,38,38,0.6)",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "4px",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                🗑️ Delete Shelf {si + 1}
+                              </button>
+                            </Html>
+                          )}
+                        </group>
                       );
                     })}
                   </group>
@@ -1580,10 +2598,20 @@ export default function FurnitureMesh({
                           key={`extDrawer-${di}`}
                           position={[0, drawerY, uD / 2 + drawerOpenDist]}
                         >
-                          <mesh material={mainMaterial} castShadow>
-                            <boxGeometry args={[uW - 0.006, dh - 0.005, 0.018]} />
-                            <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
-                          </mesh>
+                          {unit.handleType === "cncJProfile" ? (
+                            <CncDoorMesh
+                              width={uW - 0.006}
+                              height={dh - 0.005}
+                              thickness={0.018}
+                              material={mainMaterial}
+                              edgeColor={isSelected ? "#60a5fa" : edgeColor}
+                            />
+                          ) : (
+                            <mesh material={mainMaterial} castShadow>
+                              <boxGeometry args={[uW - 0.006, dh - 0.005, 0.018]} />
+                              <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
+                            </mesh>
+                          )}
                           <mesh position={[0, -0.01, -innerD * 0.45]} material={mainMaterial}>
                             <boxGeometry args={[uW - t * 2 - 0.03, dh * 0.8, innerD * 0.85]} />
                           </mesh>
@@ -1624,83 +2652,98 @@ export default function FurnitureMesh({
                   <group position={[0, t + totalDrawerHeight + doorAreaH / 2, uD / 2]}>
                     {unit.doorType === "sliding" ? (
                       <group>
-                        {/* Upper metal guide track */}
-                        <mesh position={[0, doorAreaH / 2 + 0.01, 0.015]} material={chromeMaterial}>
-                          <boxGeometry args={[uW + 0.002, 0.02, 0.045]} />
+                        {/* Upper dual-guide aluminum track */}
+                        <mesh position={[0, doorAreaH / 2 + 0.012, 0.025]} material={chromeMaterial}>
+                          <boxGeometry args={[uW + 0.002, 0.024, 0.068]} />
                         </mesh>
-                        {/* Lower metal guide track */}
-                        <mesh position={[0, -doorAreaH / 2 - 0.01, 0.015]} material={chromeMaterial}>
-                          <boxGeometry args={[uW + 0.002, 0.016, 0.045]} />
+                        {/* Lower dual-guide aluminum track */}
+                        <mesh position={[0, -doorAreaH / 2 - 0.012, 0.025]} material={chromeMaterial}>
+                          <boxGeometry args={[uW + 0.002, 0.020, 0.068]} />
                         </mesh>
 
-                        {/* Sliding Door Panel 1 (Left / Rear track) */}
+                        {/* 
+                          SLIDING DOOR BYPASS MECHANICS:
+                          - Distinct Z-positions: Rear track Z = 0.010, Front track Z = 0.040 (12mm clearance gap)
+                          - Panel 1 (Left / Rear track) is parked at X = -uW/4
+                          - Panel 2 (Right / Front track) starts at X = +uW/4 and slides smoothly in front of Panel 1 toward -uW/4
+                          - Sliding occurs near/alongside the other door, NEVER into empty space!
+                        */}
                         {(() => {
                           const panelW = uW / 2 + 0.025;
-                          const panelH = doorAreaH - 0.006;
-                          return (
-                            <group position={[-uW / 4, 0, 0.008]}>
-                              <mesh material={mainMaterial} castShadow>
-                                <boxGeometry args={[panelW, panelH, 0.018]} />
-                                <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
-                              </mesh>
-                              {renderHandle([panelW / 2 - 0.03, 0, 0.012], true, 0, unit.handleType || "edgePull", unit.handleFinish || "black")}
-                            </group>
-                          );
-                        })()}
-
-                        {/* Sliding Door Panel 2 (Right / Front track) - Slides on doorOpenPercent */}
-                        {(() => {
-                          const panelW = uW / 2 + 0.025;
-                          const panelH = doorAreaH - 0.006;
-                          const slideOffset = -(panelW * 0.85) * (doorOpenPercent / 100);
+                          const panelH = doorAreaH - 0.008;
+                          // Slide Door 2 from +uW/4 towards -uW/4
+                          const slideOffset = -(uW / 2) * (doorOpenPercent / 100);
                           const hasMirrorOnDoor = unit.hasMirror;
                           return (
-                            <group position={[uW / 4 + slideOffset, 0, 0.028]}>
-                              <mesh material={mainMaterial} castShadow>
-                                <boxGeometry args={[panelW, panelH, 0.018]} />
-                                <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
-                              </mesh>
+                            <group>
+                              {/* Sliding Door Panel 1 (Left / Rear track at Z = 0.010) */}
+                              <group position={[-uW / 4, 0, 0.010]}>
+                                <mesh material={mainMaterial} castShadow>
+                                  <boxGeometry args={[panelW, panelH, 0.018]} />
+                                  <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
+                                </mesh>
+                                {renderHandle([panelW / 2 - 0.03, 0, 0.011], true, 0, unit.handleType || "edgePull", unit.handleFinish || "black")}
+                              </group>
 
-                              {/* Mirror Option */}
-                              {hasMirrorOnDoor && (
-                                <group position={[0, 0, 0.011]}>
-                                  <mesh material={chromeMaterial}>
-                                    <boxGeometry
-                                      args={[
-                                        unit.mirrorType === "center" ? panelW * 0.75 + 0.01 : panelW - 0.04,
-                                        panelH - 0.06,
-                                        0.006,
-                                      ]}
-                                    />
-                                  </mesh>
-                                  <mesh position={[0, 0, 0.004]} material={mirrorMaterial}>
-                                    <boxGeometry
-                                      args={[
-                                        unit.mirrorType === "center" ? panelW * 0.75 : panelW - 0.06,
-                                        panelH - 0.08,
-                                        0.004,
-                                      ]}
-                                    />
-                                    <Edges threshold={15} color="#cbd5e1" />
-                                  </mesh>
-                                </group>
-                              )}
+                              {/* Sliding Door Panel 2 (Right / Front track at Z = 0.040) */}
+                              <group position={[uW / 4 + slideOffset, 0, 0.040]}>
+                                <mesh material={mainMaterial} castShadow>
+                                  <boxGeometry args={[panelW, panelH, 0.018]} />
+                                  <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
+                                </mesh>
 
-                              {renderHandle([-panelW / 2 + 0.03, 0, 0.012], true, 0, unit.handleType || "edgePull", unit.handleFinish || "black")}
+                                {/* Mirror Option on Front Face */}
+                                {hasMirrorOnDoor && (
+                                  <group position={[0, 0, 0.010]}>
+                                    <mesh material={chromeMaterial}>
+                                      <boxGeometry
+                                        args={[
+                                          unit.mirrorType === "center" ? panelW * 0.75 + 0.01 : panelW - 0.04,
+                                          panelH - 0.06,
+                                          0.004,
+                                        ]}
+                                      />
+                                    </mesh>
+                                    <mesh position={[0, 0, 0.003]} material={mirrorMaterial}>
+                                      <boxGeometry
+                                        args={[
+                                          unit.mirrorType === "center" ? panelW * 0.75 : panelW - 0.06,
+                                          panelH - 0.08,
+                                          0.003,
+                                        ]}
+                                      />
+                                      <Edges threshold={15} color="#cbd5e1" />
+                                    </mesh>
+                                  </group>
+                                )}
+
+                                {renderHandle([-panelW / 2 + 0.03, 0, 0.011], true, 0, unit.handleType || "edgePull", unit.handleFinish || "black")}
+                              </group>
                             </group>
                           );
                         })()}
                       </group>
                     ) : unit.doorType === "hingedSingle" ? (
                       (() => {
-                        const angleRad = (doorOpenPercent / 100) * (Math.PI / 2);
+                        const angleRad = (doorOpenPercent / 100) * ((85 * Math.PI) / 180);
                         const hasMirrorOnDoor = unit.hasMirror;
                         return (
                           <group position={[-uW / 2, 0, 0]} rotation={[0, -angleRad, 0]}>
-                            <mesh position={[uW / 2, 0, 0.009]} material={mainMaterial} castShadow>
-                              <boxGeometry args={[uW - 0.004, doorAreaH, 0.018]} />
-                              <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
-                            </mesh>
+                            {unit.handleType === "cncJProfile" ? (
+                              <CncDoorMesh
+                                width={uW - 0.004}
+                                height={doorAreaH}
+                                thickness={0.018}
+                                material={mainMaterial}
+                                edgeColor={isSelected ? "#60a5fa" : edgeColor}
+                                position={[uW / 2, 0, 0.009]}
+                              />
+                            ) : (
+                              <mesh position={[uW / 2, 0, 0.009]} material={mainMaterial} castShadow>
+                                <boxGeometry args={[uW - 0.004, doorAreaH, 0.018]} />
+                                <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
+                              </mesh>
+                            )}
 
                             {hasMirrorOnDoor && (
                               <group position={[uW / 2, 0, 0.02]}>
@@ -1717,17 +2760,28 @@ export default function FurnitureMesh({
                       })()
                     ) : (
                       (() => {
-                        const angleRad = (doorOpenPercent / 100) * (Math.PI / 2);
+                        const angleRad = (doorOpenPercent / 100) * ((85 * Math.PI) / 180);
                         const halfW = uW / 2;
                         const hasMirrorOnDoor = unit.hasMirror;
                         return (
                           <group>
                             {/* Left Door */}
                             <group position={[-halfW, 0, 0]} rotation={[0, -angleRad, 0]}>
-                              <mesh position={[halfW / 2, 0, 0.009]} material={mainMaterial} castShadow>
-                                <boxGeometry args={[halfW - 0.003, doorAreaH, 0.018]} />
-                                <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
-                              </mesh>
+                              {unit.handleType === "cncJProfile" ? (
+                                <CncDoorMesh
+                                  width={halfW - 0.003}
+                                  height={doorAreaH}
+                                  thickness={0.018}
+                                  material={mainMaterial}
+                                  edgeColor={isSelected ? "#60a5fa" : edgeColor}
+                                  position={[halfW / 2, 0, 0.009]}
+                                />
+                              ) : (
+                                <mesh position={[halfW / 2, 0, 0.009]} material={mainMaterial} castShadow>
+                                  <boxGeometry args={[halfW - 0.003, doorAreaH, 0.018]} />
+                                  <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
+                                </mesh>
+                              )}
                               {hasMirrorOnDoor && (
                                 <mesh position={[halfW / 2, 0, 0.021]} material={mirrorMaterial}>
                                   <boxGeometry args={[halfW - 0.06, doorAreaH - 0.08, 0.004]} />
@@ -1738,10 +2792,21 @@ export default function FurnitureMesh({
                             </group>
                             {/* Right Door */}
                             <group position={[halfW, 0, 0]} rotation={[0, angleRad, 0]}>
-                              <mesh position={[-halfW / 2, 0, 0.009]} material={mainMaterial} castShadow>
-                                <boxGeometry args={[halfW - 0.003, doorAreaH, 0.018]} />
-                                <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
-                              </mesh>
+                              {unit.handleType === "cncJProfile" ? (
+                                <CncDoorMesh
+                                  width={halfW - 0.003}
+                                  height={doorAreaH}
+                                  thickness={0.018}
+                                  material={mainMaterial}
+                                  edgeColor={isSelected ? "#60a5fa" : edgeColor}
+                                  position={[-halfW / 2, 0, 0.009]}
+                                />
+                              ) : (
+                                <mesh position={[-halfW / 2, 0, 0.009]} material={mainMaterial} castShadow>
+                                  <boxGeometry args={[halfW - 0.003, doorAreaH, 0.018]} />
+                                  <Edges threshold={15} color={isSelected ? "#60a5fa" : edgeColor} />
+                                </mesh>
+                              )}
                               {hasMirrorOnDoor && (
                                 <mesh position={[-halfW / 2, 0, 0.021]} material={mirrorMaterial}>
                                   <boxGeometry args={[halfW - 0.06, doorAreaH - 0.08, 0.004]} />
@@ -1757,77 +2822,187 @@ export default function FurnitureMesh({
                   </group>
                 )}
 
-                {/* 3D Snap Buttons on Hover: Left, Right, Top */}
-                {isHovered && (
+                {/* INTERACTIVE CAD TOOL PREVIEWS & SNAPPING FOR WARDROBE */}
+                {/* Mode 1: Add Section on Hovered Side */}
+                {activeTool === "add-base" && (
                   <group>
-                    <Html position={[-uW / 2 - 0.04, uH / 2, uD / 2]} center>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onAddAdjacentWardrobeUnit?.(unit.id, "left");
-                        }}
-                        style={{
-                          background: "#0d0d12",
-                          border: "1px solid #38bdf8",
-                          borderRadius: "4px",
-                          color: "#38bdf8",
-                          fontSize: "10px",
-                          fontWeight: 700,
-                          padding: "3px 7px",
-                          cursor: "pointer",
-                          whiteSpace: "nowrap",
-                          boxShadow: "0 2px 8px rgba(0,0,0,0.8)",
-                        }}
-                      >
-                        + Add Left
-                      </button>
-                    </Html>
+                    {/* Left Snap Detector */}
+                    <mesh
+                      position={[-uW / 2, uH / 2, 0]}
+                      onPointerOver={(e) => {
+                        e.stopPropagation();
+                        setHoveredSnap({ unitId: unit.id, side: "left" });
+                      }}
+                      onPointerOut={() => setHoveredSnap(null)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddAdjacentWardrobeUnit?.(unit.id, "left");
+                      }}
+                    >
+                      <boxGeometry args={[0.2, uH, uD]} />
+                      <meshBasicMaterial transparent opacity={0} />
+                    </mesh>
 
-                    <Html position={[uW / 2 + 0.04, uH / 2, uD / 2]} center>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onAddAdjacentWardrobeUnit?.(unit.id, "right");
-                        }}
-                        style={{
-                          background: "#0d0d12",
-                          border: "1px solid #38bdf8",
-                          borderRadius: "4px",
-                          color: "#38bdf8",
-                          fontSize: "10px",
-                          fontWeight: 700,
-                          padding: "3px 7px",
-                          cursor: "pointer",
-                          whiteSpace: "nowrap",
-                          boxShadow: "0 2px 8px rgba(0,0,0,0.8)",
-                        }}
-                      >
-                        + Add Right
-                      </button>
-                    </Html>
+                    {/* Right Snap Detector */}
+                    <mesh
+                      position={[uW / 2, uH / 2, 0]}
+                      onPointerOver={(e) => {
+                        e.stopPropagation();
+                        setHoveredSnap({ unitId: unit.id, side: "right" });
+                      }}
+                      onPointerOut={() => setHoveredSnap(null)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddAdjacentWardrobeUnit?.(unit.id, "right");
+                      }}
+                    >
+                      <boxGeometry args={[0.2, uH, uD]} />
+                      <meshBasicMaterial transparent opacity={0} />
+                    </mesh>
 
-                    <Html position={[0, uH + 0.06, uD / 2]} center>
-                      <button
+                    {/* Ghost Preview Box on Left */}
+                    {hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "left" && (
+                      <group position={[-uW / 2 - 0.45, uH / 2, 0]}>
+                        <mesh>
+                          <boxGeometry args={[0.9, uH, uD]} />
+                          <meshBasicMaterial color="#38bdf8" transparent opacity={0.22} />
+                          <Edges threshold={1} color="#38bdf8" />
+                        </mesh>
+                        <Html position={[0, 0, uD / 2 + 0.05]} center>
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAddAdjacentWardrobeUnit?.(unit.id, "left");
+                            }}
+                            style={{
+                              background: "#2972f5",
+                              color: "#fff",
+                              padding: "4px 9px",
+                              borderRadius: "5px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              boxShadow: "0 4px 14px rgba(41,114,245,0.7)",
+                              border: "1px solid rgba(255,255,255,0.3)",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            ➕ Place Section Left
+                          </div>
+                        </Html>
+                      </group>
+                    )}
+
+                    {/* Ghost Preview Box on Right */}
+                    {hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "right" && (
+                      <group position={[uW / 2 + 0.45, uH / 2, 0]}>
+                        <mesh>
+                          <boxGeometry args={[0.9, uH, uD]} />
+                          <meshBasicMaterial color="#38bdf8" transparent opacity={0.22} />
+                          <Edges threshold={1} color="#38bdf8" />
+                        </mesh>
+                        <Html position={[0, 0, uD / 2 + 0.05]} center>
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAddAdjacentWardrobeUnit?.(unit.id, "right");
+                            }}
+                            style={{
+                              background: "#2972f5",
+                              color: "#fff",
+                              padding: "4px 9px",
+                              borderRadius: "5px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              boxShadow: "0 4px 14px rgba(41,114,245,0.7)",
+                              border: "1px solid rgba(255,255,255,0.3)",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            ➕ Place Section Right
+                          </div>
+                        </Html>
+                      </group>
+                    )}
+                  </group>
+                )}
+
+                {/* Mode 2: Vertical Division on Hover */}
+                {activeTool === "add-v-division" && isHovered && (
+                  <group>
+                    <mesh position={[0, uH / 2, 0]}>
+                      <boxGeometry args={[0.018, uH - t * 2, innerD]} />
+                      <meshBasicMaterial color="#38bdf8" transparent opacity={0.6} />
+                      <Edges threshold={1} color="#38bdf8" />
+                    </mesh>
+                    <Html position={[0, uH + 0.04, uD / 2]} center>
+                      <div
                         onClick={(e) => {
                           e.stopPropagation();
-                          onAddAdjacentWardrobeUnit?.(unit.id, "top");
+                          onAddDivision?.(unit.id, "vertical");
                         }}
                         style={{
-                          background: "#0d0d12",
-                          border: "1px solid #a855f7",
-                          borderRadius: "4px",
-                          color: "#c084fc",
-                          fontSize: "10px",
+                          background: "linear-gradient(135deg, #0284c7, #2563eb)",
+                          color: "#fff",
+                          padding: "4px 9px",
+                          borderRadius: "5px",
+                          fontSize: "11px",
                           fontWeight: 700,
-                          padding: "3px 7px",
                           cursor: "pointer",
+                          boxShadow: "0 4px 12px rgba(2,132,199,0.7)",
+                          border: "1px solid rgba(255,255,255,0.3)",
                           whiteSpace: "nowrap",
-                          boxShadow: "0 2px 8px rgba(0,0,0,0.8)",
                         }}
                       >
-                        + Add Top Unit
-                      </button>
+                        ➗ Click to Add Vertical Split
+                      </div>
                     </Html>
+                  </group>
+                )}
+
+                {/* Mode 3: Horizontal Division (Shelf) on Hover */}
+                {activeTool === "add-h-division" && isHovered && (
+                  <group>
+                    {(() => {
+                      const nextCount = (unit.internalShelves ?? 0) + 1;
+                      const startY = t + totalDrawerHeight;
+                      const availH = uH - t - startY;
+                      const previewY = startY + (availH / (nextCount + 1)) * nextCount;
+                      const shelfW = unit.hasInternalDivider ? (uW - t * 3) / 2 : (uW - t * 2);
+                      const shelfX = unit.hasInternalDivider ? uW / 4 : 0;
+                      return (
+                        <group position={[shelfX, previewY, 0]}>
+                          <mesh>
+                            <boxGeometry args={[shelfW, 0.018, innerD]} />
+                            <meshBasicMaterial color="#10b981" transparent opacity={0.6} />
+                            <Edges threshold={1} color="#10b981" />
+                          </mesh>
+                          <Html position={[0, 0.04, uD / 2]} center>
+                            <div
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onAddDivision?.(unit.id, "horizontal");
+                              }}
+                              style={{
+                                background: "linear-gradient(135deg, #059669, #10b981)",
+                                color: "#fff",
+                                padding: "4px 9px",
+                                borderRadius: "5px",
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                boxShadow: "0 4px 12px rgba(16,185,129,0.7)",
+                                border: "1px solid rgba(255,255,255,0.3)",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              📚 Click to Add Shelf (#{nextCount})
+                            </div>
+                          </Html>
+                        </group>
+                      );
+                    })()}
                   </group>
                 )}
               </group>
@@ -1921,73 +3096,124 @@ export default function FurnitureMesh({
         ? renderWardrobeSystem()
         : renderTable()}
 
-      {/* Sleek CAD Dimension Tags */}
-      {showDimensions && (
-        <group>
-          <Html position={[0, h + 0.06, d / 2 + 0.02]} center>
-            <div
-              style={{
-                background: "rgba(13, 13, 18, 0.9)",
-                border: "1px solid rgba(41, 114, 245, 0.5)",
-                borderRadius: "4px",
-                padding: "2px 7px",
-                color: "#93c5fd",
-                fontSize: "11px",
-                fontWeight: 600,
-                letterSpacing: "0.03em",
-                whiteSpace: "nowrap",
-                pointerEvents: "none",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.7)",
-                userSelect: "none",
-              }}
-            >
-              W: {width} mm
-            </div>
-          </Html>
+      {/* Sleek CAD Dimension Tags with Exact Assembly Bounding Box & Plinth Included */}
+      {showDimensions && (() => {
+        let totalDimW = width;
+        let totalDimH = height;
+        let totalDimD = depth;
 
-          <Html position={[w / 2 + 0.05, h / 2, d / 2 + 0.02]} center>
-            <div
-              style={{
-                background: "rgba(13, 13, 18, 0.9)",
-                border: "1px solid rgba(41, 114, 245, 0.5)",
-                borderRadius: "4px",
-                padding: "2px 7px",
-                color: "#93c5fd",
-                fontSize: "11px",
-                fontWeight: 600,
-                letterSpacing: "0.03em",
-                whiteSpace: "nowrap",
-                pointerEvents: "none",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.7)",
-                userSelect: "none",
-              }}
-            >
-              H: {height} mm
-            </div>
-          </Html>
+        if (category === "Cabinet") {
+          const kUnits = kitchenUnits && kitchenUnits.length > 0 ? kitchenUnits : [{ width: 600, height: 720, depth: 600, type: "base" }];
+          const bUnits = kUnits.filter(u => u.type === "base" || u.type === "corner-base");
+          const wUnits = kUnits.filter(u => u.type === "wall");
+          const pBaseH = baseType === "floating" ? 0 : (plinthHeight || 80);
+          totalDimW = bUnits.length > 0 ? bUnits.reduce((acc, u) => acc + u.width, 0) : 600;
+          const maxBaseH = bUnits.length > 0 ? Math.max(...bUnits.map(u => u.height)) : 720;
+          const maxWallH = wUnits.length > 0 ? Math.max(...wUnits.map(u => u.height)) : 0;
+          totalDimH = pBaseH + maxBaseH + (wUnits.length > 0 ? 550 + maxWallH : 0);
+          totalDimD = bUnits.length > 0 ? Math.max(...bUnits.map(u => u.depth)) : 600;
+        } else if (category === "Wardrobe") {
+          const wUnits = wardrobeUnits && wardrobeUnits.length > 0 ? wardrobeUnits : [{ width: 900, height: 2100, depth: 600, type: "main" }];
+          const mUnits = wUnits.filter(u => u.type !== "top");
+          const tUnits = wUnits.filter(u => u.type === "top");
+          const pWardH = baseType === "floating" ? 0 : (plinthHeight ?? 80);
+          totalDimW = mUnits.length > 0 ? mUnits.reduce((acc, u) => acc + u.width, 0) : 900;
+          const maxMainH = mUnits.length > 0 ? Math.max(...mUnits.map(u => u.height)) : 2100;
+          const maxTopH = tUnits.length > 0 ? Math.max(...tUnits.map(u => u.height)) : 0;
+          totalDimH = pWardH + maxMainH + maxTopH;
+          totalDimD = depth || 600;
+        } else {
+          totalDimW = width || 1400;
+          totalDimH = height || 750;
+          totalDimD = depth || 800;
+        }
 
-          <Html position={[-w / 2 - 0.05, 0.05, 0]} center>
-            <div
-              style={{
-                background: "rgba(13, 13, 18, 0.9)",
-                border: "1px solid rgba(41, 114, 245, 0.5)",
-                borderRadius: "4px",
-                padding: "2px 7px",
-                color: "#93c5fd",
-                fontSize: "11px",
-                fontWeight: 600,
-                letterSpacing: "0.03em",
-                whiteSpace: "nowrap",
-                pointerEvents: "none",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.7)",
-                userSelect: "none",
-              }}
+        const mDimW = totalDimW / 1000;
+        const mDimH = totalDimH / 1000;
+        const mDimD = totalDimD / 1000;
+
+        return (
+          <group>
+            {/* Top Width Tag */}
+            <Html
+              position={[0, mDimH + 0.08, mDimD / 2 + 0.03]}
+              center
+              zIndexRange={[100, 0]}
             >
-              D: {depth} mm
-            </div>
-          </Html>
-        </group>
-      )}
+              <div
+                style={{
+                  background: "rgba(13, 13, 18, 0.94)",
+                  border: "1px solid rgba(41, 114, 245, 0.7)",
+                  borderRadius: "4px",
+                  padding: "3px 8px",
+                  color: "#93c5fd",
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  letterSpacing: "0.03em",
+                  whiteSpace: "nowrap",
+                  pointerEvents: "none",
+                  boxShadow: "0 2px 10px rgba(0,0,0,0.8)",
+                  userSelect: "none",
+                }}
+              >
+                W: {Math.round(totalDimW)} mm
+              </div>
+            </Html>
+
+            {/* Right Height Tag */}
+            <Html
+              position={[mDimW / 2 + 0.06, mDimH / 2, mDimD / 2 + 0.03]}
+              center
+              zIndexRange={[100, 0]}
+            >
+              <div
+                style={{
+                  background: "rgba(13, 13, 18, 0.94)",
+                  border: "1px solid rgba(41, 114, 245, 0.7)",
+                  borderRadius: "4px",
+                  padding: "3px 8px",
+                  color: "#93c5fd",
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  letterSpacing: "0.03em",
+                  whiteSpace: "nowrap",
+                  pointerEvents: "none",
+                  boxShadow: "0 2px 10px rgba(0,0,0,0.8)",
+                  userSelect: "none",
+                }}
+              >
+                H: {Math.round(totalDimH)} mm
+              </div>
+            </Html>
+
+            {/* Left Depth Tag */}
+            <Html
+              position={[-mDimW / 2 - 0.06, 0.05, 0]}
+              center
+              zIndexRange={[100, 0]}
+            >
+              <div
+                style={{
+                  background: "rgba(13, 13, 18, 0.94)",
+                  border: "1px solid rgba(41, 114, 245, 0.7)",
+                  borderRadius: "4px",
+                  padding: "3px 8px",
+                  color: "#93c5fd",
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  letterSpacing: "0.03em",
+                  whiteSpace: "nowrap",
+                  pointerEvents: "none",
+                  boxShadow: "0 2px 10px rgba(0,0,0,0.8)",
+                  userSelect: "none",
+                }}
+              >
+                D: {Math.round(totalDimD)} mm
+              </div>
+            </Html>
+          </group>
+        );
+      })()}
     </group>
   );
 }

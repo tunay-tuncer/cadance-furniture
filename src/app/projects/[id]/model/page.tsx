@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect, use } from "react";
+import React, { useState, useRef, useEffect, useCallback, use } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -9,10 +9,13 @@ import { useAuth } from "@/context/AuthContext";
 import { subscribeToUserProject, ProjectItem } from "@/lib/firebase/projectService";
 import { addFurnitureToProject } from "@/lib/firebase/furnitureService";
 import { exportFurnitureModel, ExportFormat } from "@/lib/exporters/exportModel";
-import { FurnitureParams, KitchenCabinetUnit, WardrobeUnit } from "@/components/modeler/FurnitureMesh";
+import { FurnitureParams, KitchenCabinetUnit, WardrobeUnit, SelectedDivision } from "@/components/modeler/FurnitureMesh";
 import ModelerControls from "@/components/modeler/ModelerControls";
 import ModelerToolbar from "@/components/modeler/ModelerToolbar";
+import CadActionToolbar from "@/components/modeler/CadActionToolbar";
+import TechnicalDrawingWorkspace from "@/components/technical-drawing/TechnicalDrawingWorkspace";
 import { FaChevronLeft } from "react-icons/fa";
+import { Md3dRotation, MdDesignServices } from "react-icons/md";
 import styles from "@/components/modeler/modeler.module.css";
 
 const ModelerCanvas = dynamic(
@@ -56,7 +59,7 @@ const ModelerCanvas = dynamic(
 const DEFAULT_WARDROBE_UNITS: WardrobeUnit[] = [
   {
     id: "wardrobe-1",
-    name: "Main Section 1 (Hanging & Drawers)",
+    name: "Wardrobe Division 1",
     type: "main",
     width: 900,
     height: 2100,
@@ -75,57 +78,6 @@ const DEFAULT_WARDROBE_UNITS: WardrobeUnit[] = [
     handleType: "edgePull",
     handleFinish: "black",
   },
-  {
-    id: "wardrobe-2",
-    name: "Main Section 2 (Shelves & Mirror)",
-    type: "main",
-    width: 900,
-    height: 2100,
-    depth: 600,
-    doorType: "sliding",
-    doorOpenPercent: 0,
-    hasMirror: true,
-    mirrorType: "full",
-    hasDrawers: false,
-    drawerType: "internal",
-    drawerCount: 0,
-    drawerOpenPercent: 0,
-    hasClothesHangerRail: false,
-    internalShelves: 4,
-    hasInternalDivider: false,
-    handleType: "edgePull",
-    handleFinish: "black",
-  },
-  {
-    id: "wardrobe-top-1",
-    name: "Top Bridge 1",
-    type: "top",
-    width: 900,
-    height: 450,
-    depth: 600,
-    doorType: "hingedDouble",
-    doorOpenPercent: 0,
-    hasMirror: false,
-    internalShelves: 1,
-    drawerCount: 0,
-    handleType: "edgePull",
-    handleFinish: "black",
-  },
-  {
-    id: "wardrobe-top-2",
-    name: "Top Bridge 2",
-    type: "top",
-    width: 900,
-    height: 450,
-    depth: 600,
-    doorType: "hingedDouble",
-    doorOpenPercent: 0,
-    hasMirror: false,
-    internalShelves: 1,
-    drawerCount: 0,
-    handleType: "edgePull",
-    handleFinish: "black",
-  },
 ];
 
 const DEFAULT_KITCHEN_UNITS: KitchenCabinetUnit[] = [
@@ -137,45 +89,6 @@ const DEFAULT_KITCHEN_UNITS: KitchenCabinetUnit[] = [
     height: 720,
     depth: 600,
     doorType: "singleLeft",
-    drawerCount: 0,
-    internalShelves: 2,
-    handleType: "bar",
-    handleFinish: "black",
-  },
-  {
-    id: "base-2",
-    name: "Base Cabinet 2",
-    type: "base",
-    width: 800,
-    height: 720,
-    depth: 600,
-    doorType: "double",
-    drawerCount: 0,
-    internalShelves: 2,
-    handleType: "bar",
-    handleFinish: "black",
-  },
-  {
-    id: "wall-1",
-    name: "Wall Cabinet 1",
-    type: "wall",
-    width: 600,
-    height: 720,
-    depth: 350,
-    doorType: "singleLeft",
-    drawerCount: 0,
-    internalShelves: 2,
-    handleType: "bar",
-    handleFinish: "black",
-  },
-  {
-    id: "wall-2",
-    name: "Wall Cabinet 2",
-    type: "wall",
-    width: 800,
-    height: 720,
-    depth: 350,
-    doorType: "double",
     drawerCount: 0,
     internalShelves: 2,
     handleType: "bar",
@@ -204,7 +117,8 @@ export default function ModelerPage({ params }: PageProps) {
     materialType: "oak",
     showDimensions: true,
     wireframe: false,
-    boardThickness: 30,
+    boardThickness: 18,
+    tableTopThickness: 18,
     topOverhang: 25,
     legType: "square",
     legThickness: 50,
@@ -224,12 +138,15 @@ export default function ModelerPage({ params }: PageProps) {
     hasBackPanel: true,
     kitchenUnits: DEFAULT_KITCHEN_UNITS,
     selectedUnitId: "base-1",
+    selectedUnitIds: ["base-1"],
     wardrobeUnits: DEFAULT_WARDROBE_UNITS,
     selectedWardrobeUnitId: "wardrobe-1",
   });
 
   const [showGrid, setShowGrid] = useState<boolean>(true);
   const [isParallel, setIsParallel] = useState<boolean>(false);
+  const [workspaceMode, setWorkspaceMode] = useState<"3d" | "2d">("3d");
+  const [inspectorTab, setInspectorTab] = useState<"3d" | "2d">("3d");
   const [saving, setSaving] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
 
@@ -242,18 +159,102 @@ export default function ModelerPage({ params }: PageProps) {
   return () => unsub();
   }, [user?.uid, projectId]);
 
-  const handleSelectUnit = (id: string) => {
-    setFurnitureParams((prev) => ({
-      ...prev,
-      selectedUnitId: id,
-    }));
-  };
+  const handleSelectUnit = useCallback((id: string) => {
+    setFurnitureParams((prev) => {
+      if (
+        prev.selectedUnitId === id &&
+        prev.selectedUnitIds?.length === 1 &&
+        prev.selectedUnitIds[0] === id
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        selectedUnitId: id,
+        selectedUnitIds: [id],
+      };
+    });
+  }, []);
+
+  const handleSelectUnits = useCallback((ids: string[]) => {
+    setFurnitureParams((prev) => {
+      const prevIds = prev.selectedUnitIds || [];
+      if (
+        prevIds.length === ids.length &&
+        prevIds.every((v, i) => v === ids[i]) &&
+        prev.selectedUnitId === ids[0]
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        selectedUnitIds: ids,
+        selectedUnitId: ids[0] || prev.selectedUnitId,
+      };
+    });
+  }, []);
 
   const handleSelectWardrobeUnit = (id: string) => {
     setFurnitureParams((prev) => ({
       ...prev,
       selectedWardrobeUnitId: id,
     }));
+  };
+
+  const handleSelectDivision = (div: SelectedDivision | null) => {
+    setFurnitureParams((prev) => ({
+      ...prev,
+      selectedDivision: div,
+    }));
+  };
+
+  const handleRemoveDivision = (div: SelectedDivision) => {
+    setFurnitureParams((prev) => {
+      if (prev.category === "Cabinet") {
+        const units = prev.kitchenUnits || DEFAULT_KITCHEN_UNITS;
+        if (div.type === "shelf") {
+          const updated = units.map((u) => {
+            if (u.id === div.unitId) {
+              return {
+                ...u,
+                internalShelves: Math.max(0, (u.internalShelves ?? 0) - 1),
+              };
+            }
+            return u;
+          });
+          return { ...prev, kitchenUnits: updated, selectedDivision: null };
+        }
+      } else if (prev.category === "Wardrobe") {
+        const units = prev.wardrobeUnits || DEFAULT_WARDROBE_UNITS;
+        if (div.type === "shelf") {
+          const updated = units.map((u) => {
+            if (u.id === div.unitId) {
+              return {
+                ...u,
+                internalShelves: Math.max(0, (u.internalShelves ?? 0) - 1),
+              };
+            }
+            return u;
+          });
+          return { ...prev, wardrobeUnits: updated, selectedDivision: null };
+        } else if (div.type === "partition") {
+          const updated = units.map((u) => {
+            if (u.id === div.unitId) {
+              return { ...u, hasInternalDivider: false };
+            }
+            return u;
+          });
+          return { ...prev, wardrobeUnits: updated, selectedDivision: null };
+        }
+      } else if (prev.category === "Shelf") {
+        return {
+          ...prev,
+          internalShelves: Math.max(0, (prev.internalShelves ?? 2) - 1),
+          selectedDivision: null,
+        };
+      }
+      return { ...prev, selectedDivision: null };
+    });
   };
 
   const handleAddAdjacentWardrobeUnit = (
@@ -325,6 +326,77 @@ export default function ModelerPage({ params }: PageProps) {
     });
   };
 
+  const handleAddDivision = (unitId: string, type: "vertical" | "horizontal") => {
+    if (furnitureParams.category === "Cabinet") {
+      setFurnitureParams((prev) => {
+        const units = prev.kitchenUnits || DEFAULT_KITCHEN_UNITS;
+        const target = units.find((u) => u.id === unitId);
+        if (!target) return prev;
+        if (type === "horizontal") {
+          const updated = units.map((u) =>
+            u.id === unitId ? { ...u, internalShelves: Math.min(6, (u.internalShelves ?? 0) + 1) } : u
+          );
+          return { ...prev, kitchenUnits: updated };
+        } else {
+          // Vertical division: split into two base units
+          const newW = Math.max(300, Math.round(target.width / 2));
+          const idx = units.findIndex((u) => u.id === unitId);
+          const newUnit: KitchenCabinetUnit = {
+            id: `base-${Date.now()}`,
+            name: `Base Cabinet ${units.length + 1}`,
+            type: target.type,
+            width: newW,
+            height: target.height,
+            depth: target.depth,
+            doorType: "singleRight",
+            drawerCount: 0,
+            internalShelves: target.internalShelves ?? 2,
+            handleType: target.handleType,
+            handleFinish: target.handleFinish,
+          };
+          const nextUnits = [...units];
+          nextUnits[idx] = { ...target, width: newW, doorType: "singleLeft" };
+          nextUnits.splice(idx + 1, 0, newUnit);
+          return { ...prev, kitchenUnits: nextUnits, selectedUnitId: newUnit.id };
+        }
+      });
+    } else if (furnitureParams.category === "Wardrobe") {
+      setFurnitureParams((prev) => {
+        const units = prev.wardrobeUnits || DEFAULT_WARDROBE_UNITS;
+        const target = units.find((u) => u.id === unitId);
+        if (!target) return prev;
+        if (type === "horizontal") {
+          const updated = units.map((u) =>
+            u.id === unitId ? { ...u, internalShelves: Math.min(6, (u.internalShelves ?? 0) + 1) } : u
+          );
+          return { ...prev, wardrobeUnits: updated };
+        } else {
+          // Vertical division: if no internal divider, add one; otherwise split section
+          if (!target.hasInternalDivider) {
+            const updated = units.map((u) =>
+              u.id === unitId ? { ...u, hasInternalDivider: true } : u
+            );
+            return { ...prev, wardrobeUnits: updated };
+          } else {
+            const newW = Math.max(450, Math.round(target.width / 2));
+            const idx = units.findIndex((u) => u.id === unitId);
+            const newUnit: WardrobeUnit = {
+              ...target,
+              id: `wardrobe-${Date.now()}`,
+              name: `Division ${units.length + 1}`,
+              width: newW,
+              hasInternalDivider: false,
+            };
+            const nextUnits = [...units];
+            nextUnits[idx] = { ...target, width: newW, hasInternalDivider: false };
+            nextUnits.splice(idx + 1, 0, newUnit);
+            return { ...prev, wardrobeUnits: nextUnits, selectedWardrobeUnitId: newUnit.id };
+          }
+        }
+      });
+    }
+  };
+
   const handleAddAdjacentUnit = (
     sourceId: string,
     direction: "left" | "right" | "top"
@@ -339,6 +411,7 @@ export default function ModelerPage({ params }: PageProps) {
           id: `wall-${Date.now()}`,
           name: `Wall Unit (${source.width}mm)`,
           type: "wall",
+          materialType: source.materialType || prev.materialType,
           width: source.width,
           height: 720,
           depth: 350,
@@ -352,16 +425,24 @@ export default function ModelerPage({ params }: PageProps) {
           ...prev,
           kitchenUnits: [...list, newWall],
           selectedUnitId: newWall.id,
+          selectedUnitIds: [newWall.id],
         };
       } else {
+        // Smart Paired Handing: In real-life cabinetry, adjacent single doors are handed in opposing pairs
+        const adjacentDoorType = direction === "right"
+          ? (source.doorType === "singleLeft" ? "singleRight" : "singleLeft")
+          : (source.doorType === "singleRight" ? "singleLeft" : "singleRight");
+
         const newBase: KitchenCabinetUnit = {
           id: `base-${Date.now()}`,
-          name: `Base Cabinet ${list.filter((u) => u.type === "base").length + 1}`,
+          name: `Base Cabinet ${list.filter((u) => u.type === "base" || u.type === "corner-base").length + 1}`,
           type: "base",
+          orientation: "straight",
+          materialType: source.materialType || prev.materialType,
           width: 600,
           height: 720,
           depth: 600,
-          doorType: "singleLeft",
+          doorType: adjacentDoorType,
           drawerCount: 0,
           internalShelves: 2,
           handleType: source.handleType,
@@ -378,6 +459,7 @@ export default function ModelerPage({ params }: PageProps) {
           ...prev,
           kitchenUnits: updated,
           selectedUnitId: newBase.id,
+          selectedUnitIds: [newBase.id],
         };
       }
     });
@@ -465,55 +547,122 @@ export default function ModelerPage({ params }: PageProps) {
           {project?.name && (
             <span className={styles.projectBadge}>{project.name}</span>
           )}
+
+          {/* Top Workspace Mode Switcher (3D Modeler vs 2D Technical Drawing) */}
+          <div className={styles.workspaceModeSwitcher}>
+            <button
+              type="button"
+              onClick={() => {
+                setWorkspaceMode("3d");
+                setInspectorTab("3d");
+              }}
+              className={`${styles.workspaceModeBtn} ${
+                workspaceMode === "3d" ? styles.workspaceModeBtnActive : ""
+              }`}
+              title="3D Parametric Workspace"
+            >
+              <Md3dRotation size={15} />
+              <span>3D Studio</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setWorkspaceMode("2d");
+                setInspectorTab("2d");
+              }}
+              className={`${styles.workspaceModeBtn} ${
+                workspaceMode === "2d" ? styles.workspaceModeBtnActive : ""
+              }`}
+              title="2D Vector Technical Drawing Sheet"
+            >
+              <MdDesignServices size={15} />
+              <span>2D Technical View</span>
+            </button>
+          </div>
         </div>
 
-        <ModelerToolbar
-          showGrid={showGrid}
-          setShowGrid={setShowGrid}
-          showDimensions={Boolean(furnitureParams.showDimensions)}
-          setShowDimensions={(updater) =>
-            setFurnitureParams((prev) => ({
-              ...prev,
-              showDimensions:
-                typeof updater === "function"
-                  ? updater(Boolean(prev.showDimensions))
-                  : updater,
-            }))
-          }
-          wireframe={Boolean(furnitureParams.wireframe)}
-          setWireframe={(updater) =>
-            setFurnitureParams((prev) => ({
-              ...prev,
-              wireframe:
-                typeof updater === "function"
-                  ? updater(Boolean(prev.wireframe))
-                  : updater,
-            }))
-          }
-          isParallel={isParallel}
-          setIsParallel={setIsParallel}
-        />
+        {workspaceMode === "3d" ? (
+          <>
+            <CadActionToolbar
+              params={{
+                ...furnitureParams,
+                onSelectDivision: handleSelectDivision,
+                onRemoveDivision: handleRemoveDivision,
+              }}
+              setParams={setFurnitureParams}
+            />
 
-        <ModelerCanvas
-          params={furnitureParams}
-          groupRef={groupRef}
-          showGrid={showGrid}
-          isParallel={isParallel}
-          setIsParallel={setIsParallel}
-          onSelectUnit={handleSelectUnit}
-          onAddAdjacentUnit={handleAddAdjacentUnit}
-          onSelectWardrobeUnit={handleSelectWardrobeUnit}
-          onAddAdjacentWardrobeUnit={handleAddAdjacentWardrobeUnit}
-        />
+            <ModelerToolbar
+              showGrid={showGrid}
+              setShowGrid={setShowGrid}
+              showDimensions={Boolean(furnitureParams.showDimensions)}
+              setShowDimensions={(updater) =>
+                setFurnitureParams((prev) => ({
+                  ...prev,
+                  showDimensions:
+                    typeof updater === "function"
+                      ? updater(Boolean(prev.showDimensions))
+                      : updater,
+                }))
+              }
+              wireframe={Boolean(furnitureParams.wireframe)}
+              setWireframe={(updater) =>
+                setFurnitureParams((prev) => ({
+                  ...prev,
+                  wireframe:
+                    typeof updater === "function"
+                      ? updater(Boolean(prev.wireframe))
+                      : updater,
+                }))
+              }
+              isParallel={isParallel}
+              setIsParallel={setIsParallel}
+            />
+
+            <ModelerCanvas
+              params={{
+                ...furnitureParams,
+                onSelectDivision: handleSelectDivision,
+                onRemoveDivision: handleRemoveDivision,
+              }}
+              groupRef={groupRef}
+              showGrid={showGrid}
+              isParallel={isParallel}
+              setIsParallel={setIsParallel}
+              onSelectUnit={handleSelectUnit}
+              onSelectUnits={handleSelectUnits}
+              onAddAdjacentUnit={handleAddAdjacentUnit}
+              onSelectWardrobeUnit={handleSelectWardrobeUnit}
+              onAddAdjacentWardrobeUnit={handleAddAdjacentWardrobeUnit}
+              onAddDivision={handleAddDivision}
+              onSelectDivision={handleSelectDivision}
+              onRemoveDivision={handleRemoveDivision}
+            />
+          </>
+        ) : (
+          <TechnicalDrawingWorkspace
+            params={furnitureParams}
+            setParams={setFurnitureParams}
+            projectName={project?.name || "Parametric Furniture Project"}
+            clientName="Cadance Studio"
+            onOpenSettings={() => setInspectorTab("2d")}
+          />
+        )}
       </div>
 
       <ModelerControls
-        params={furnitureParams}
+        params={{
+          ...furnitureParams,
+          onSelectDivision: handleSelectDivision,
+          onRemoveDivision: handleRemoveDivision,
+        }}
         setParams={setFurnitureParams}
         onSave={handleSave}
         onExport={handleExport}
         saving={saving}
         saveSuccess={saveSuccess}
+        inspectorTab={inspectorTab}
+        setInspectorTab={setInspectorTab}
       />
     </div>
   );

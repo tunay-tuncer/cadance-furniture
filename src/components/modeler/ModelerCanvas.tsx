@@ -21,13 +21,94 @@ interface ModelerCanvasProps {
   isParallel: boolean;
   setIsParallel: (val: boolean) => void;
   onSelectUnit?: (id: string) => void;
+  onSelectUnits?: (ids: string[]) => void;
   onAddAdjacentUnit?: (sourceId: string, direction: "left" | "right" | "top") => void;
   onSelectWardrobeUnit?: (id: string) => void;
   onAddAdjacentWardrobeUnit?: (sourceId: string, direction: "left" | "right" | "top") => void;
+  onAddDivision?: (unitId: string, type: "vertical" | "horizontal") => void;
+  onSelectDivision?: (div: import("./FurnitureMesh").SelectedDivision | null) => void;
+  onRemoveDivision?: (div: import("./FurnitureMesh").SelectedDivision) => void;
 }
 
 // Default orbit pivot point at furniture vertical midpoint (~450mm from floor)
 const DEFAULT_TARGET: [number, number, number] = [0, 0.45, 0];
+
+// Instant Marquee Box Selection Bridge inside 3D Scene
+function BoxSelectHandler({
+  groupRef,
+  onSelectUnits,
+  boxSelectorRef,
+}: {
+  groupRef: React.RefObject<THREE.Group | null>;
+  onSelectUnits?: (ids: string[]) => void;
+  boxSelectorRef: React.MutableRefObject<((rect: [number, number, number, number]) => void) | null>;
+}) {
+  const { camera, size } = useThree();
+
+  useEffect(() => {
+    boxSelectorRef.current = ([minX, minY, maxX, maxY]) => {
+      const root = groupRef.current;
+      if (!root) return;
+      const matchedIds: string[] = [];
+      const checkedUnits = new Set<string>();
+
+      root.traverse((obj) => {
+        const unitId = obj.userData?.unitId;
+        if (unitId && typeof unitId === "string" && !checkedUnits.has(unitId)) {
+          checkedUnits.add(unitId);
+
+          const bbox = new THREE.Box3().setFromObject(obj);
+          if (!bbox.isEmpty()) {
+            // Check center
+            const center = new THREE.Vector3();
+            bbox.getCenter(center);
+            const projCenter = center.clone().project(camera);
+            if (projCenter.z < 1) {
+              const sx = ((projCenter.x + 1) / 2) * size.width;
+              const sy = ((-projCenter.y + 1) / 2) * size.height;
+              if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) {
+                matchedIds.push(unitId);
+                return;
+              }
+            }
+
+            // Check corner vertices of bounding box
+            const corners = [
+              new THREE.Vector3(bbox.min.x, bbox.min.y, bbox.min.z),
+              new THREE.Vector3(bbox.max.x, bbox.max.y, bbox.min.z),
+              new THREE.Vector3(bbox.min.x, bbox.max.y, bbox.min.z),
+              new THREE.Vector3(bbox.max.x, bbox.min.y, bbox.min.z),
+              new THREE.Vector3(bbox.min.x, bbox.min.y, bbox.max.z),
+              new THREE.Vector3(bbox.max.x, bbox.min.y, bbox.max.z),
+            ];
+
+            for (const corner of corners) {
+              const proj = corner.project(camera);
+              if (proj.z < 1) {
+                const px = ((proj.x + 1) / 2) * size.width;
+                const py = ((-proj.y + 1) / 2) * size.height;
+                if (px >= minX && px <= maxX && py >= minY && py <= maxY) {
+                  matchedIds.push(unitId);
+                  break;
+                }
+              }
+            }
+          }
+        }
+      });
+
+      if (matchedIds.length > 0) {
+        onSelectUnits?.(matchedIds);
+      }
+    };
+
+    return () => {
+      boxSelectorRef.current = null;
+    };
+  }, [camera, size, groupRef, onSelectUnits, boxSelectorRef]);
+
+  return null;
+}
 
 // Controller component to manage seamless Perspective <-> Orthographic synchronization
 function CameraSyncController({
@@ -144,13 +225,97 @@ export default function ModelerCanvas({
   isParallel,
   setIsParallel,
   onSelectUnit,
+  onSelectUnits,
   onAddAdjacentUnit,
   onSelectWardrobeUnit,
   onAddAdjacentWardrobeUnit,
+  onAddDivision,
+  onSelectDivision,
+  onRemoveDivision,
 }: ModelerCanvasProps) {
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const perspRef = useRef<THREE.PerspectiveCamera | null>(null);
   const orthoRef = useRef<THREE.OrthographicCamera | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const isBoxSelectTool = params.activeTool === "box-select";
+  const marqueeOverlayRef = useRef<HTMLDivElement | null>(null);
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const isSelectingRef = useRef(false);
+  const boxSelectorRef = useRef<((rect: [number, number, number, number]) => void) | null>(null);
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isBoxSelectTool || e.button !== 0) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    isSelectingRef.current = true;
+    dragStartRef.current = { x, y };
+
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+
+    if (marqueeOverlayRef.current) {
+      marqueeOverlayRef.current.style.display = "block";
+      marqueeOverlayRef.current.style.left = `${x}px`;
+      marqueeOverlayRef.current.style.top = `${y}px`;
+      marqueeOverlayRef.current.style.width = "0px";
+      marqueeOverlayRef.current.style.height = "0px";
+    }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isSelectingRef.current || !dragStartRef.current) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const minX = Math.min(dragStartRef.current.x, x);
+    const maxX = Math.max(dragStartRef.current.x, x);
+    const minY = Math.min(dragStartRef.current.y, y);
+    const maxY = Math.max(dragStartRef.current.y, y);
+
+    if (marqueeOverlayRef.current) {
+      marqueeOverlayRef.current.style.left = `${minX}px`;
+      marqueeOverlayRef.current.style.top = `${minY}px`;
+      marqueeOverlayRef.current.style.width = `${maxX - minX}px`;
+      marqueeOverlayRef.current.style.height = `${maxY - minY}px`;
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isSelectingRef.current) return;
+    isSelectingRef.current = false;
+
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+
+    if (marqueeOverlayRef.current) {
+      marqueeOverlayRef.current.style.display = "none";
+    }
+
+    const start = dragStartRef.current;
+    dragStartRef.current = null;
+    if (!start) return;
+
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const currentX = e.clientX - rect.left;
+    const currentY = e.clientY - rect.top;
+
+    const minX = Math.min(start.x, currentX);
+    const maxX = Math.max(start.x, currentX);
+    const minY = Math.min(start.y, currentY);
+    const maxY = Math.max(start.y, currentY);
+
+    if (maxX - minX > 8 && maxY - minY > 8) {
+      boxSelectorRef.current?.([minX, minY, maxX, maxY]);
+    }
+  };
 
   // When a view is selected on the ViewCube (face or isometric corner),
   // switch projection to Parallel (Orthographic)
@@ -159,7 +324,19 @@ export default function ModelerCanvas({
   };
 
   return (
-    <div style={{ width: "100%", height: "100%", position: "relative" }}>
+    <div
+      ref={containerRef}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      style={{
+        width: "100%",
+        height: "100%",
+        position: "relative",
+        cursor: isBoxSelectTool ? "crosshair" : "default",
+        userSelect: "none",
+      }}
+    >
       <Canvas
         shadows
         gl={{ antialias: true, preserveDrawingBuffer: true }}
@@ -211,9 +388,13 @@ export default function ModelerCanvas({
               params={params}
               groupRef={groupRef}
               onSelectUnit={onSelectUnit}
+              onSelectUnits={onSelectUnits}
               onAddAdjacentUnit={onAddAdjacentUnit}
               onSelectWardrobeUnit={onSelectWardrobeUnit}
               onAddAdjacentWardrobeUnit={onAddAdjacentWardrobeUnit}
+              onAddDivision={onAddDivision}
+              onSelectDivision={onSelectDivision}
+              onRemoveDivision={onRemoveDivision}
             />
           </group>
 
@@ -233,10 +414,11 @@ export default function ModelerCanvas({
             />
           )}
 
-          {/* Viewport Orbit Controls */}
+          {/* Viewport Orbit Controls (Disabled when dragging Box Selection) */}
           <OrbitControls
             ref={controlsRef}
             makeDefault
+            enabled={!isBoxSelectTool}
             target={DEFAULT_TARGET}
             minDistance={0.4}
             maxDistance={8}
@@ -253,6 +435,13 @@ export default function ModelerCanvas({
             orthoRef={orthoRef}
           />
 
+          {/* High-Performance Marquee Box Selection Handler */}
+          <BoxSelectHandler
+            groupRef={groupRef}
+            onSelectUnits={onSelectUnits}
+            boxSelectorRef={boxSelectorRef}
+          />
+
           {/* 
             INTERACTIVE CAD VIEWCUBE:
             - Click any face for Orthographic (Top, Front, Right, etc.) in Parallel projection
@@ -264,6 +453,21 @@ export default function ModelerCanvas({
           </GizmoHelper>
         </Suspense>
       </Canvas>
+
+      {/* 2D Marquee Selection Overlay Box (GPU accelerated, DOM-ref updated) */}
+      <div
+        ref={marqueeOverlayRef}
+        style={{
+          display: "none",
+          position: "absolute",
+          border: "1.5px dashed #38bdf8",
+          backgroundColor: "rgba(56, 189, 248, 0.16)",
+          boxShadow: "0 0 15px rgba(56, 189, 248, 0.35)",
+          pointerEvents: "none",
+          zIndex: 40,
+          borderRadius: "3px",
+        }}
+      />
     </div>
   );
 }

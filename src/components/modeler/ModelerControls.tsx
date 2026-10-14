@@ -19,8 +19,14 @@ import {
   MdAdd,
   MdDeleteOutline,
   MdContentCopy,
+  MdTurnRight,
+  MdDesignServices,
+  Md3dRotation,
+  MdScreenRotation,
+  MdEditNote,
 } from "react-icons/md";
 import styles from "./modeler.module.css";
+import { TechnicalDrawingSettings } from "./FurnitureMesh";
 
 interface ModelerControlsProps {
   params: FurnitureParams;
@@ -29,6 +35,8 @@ interface ModelerControlsProps {
   onExport: (format: "obj" | "gltf" | "stl") => void;
   saving: boolean;
   saveSuccess?: boolean;
+  inspectorTab?: "3d" | "2d";
+  setInspectorTab?: (tab: "3d" | "2d") => void;
 }
 
 const CATEGORIES: FurnitureParams["category"][] = [
@@ -53,8 +61,28 @@ export default function ModelerControls({
   onExport,
   saving,
   saveSuccess,
+  inspectorTab: propInspectorTab,
+  setInspectorTab: propSetInspectorTab,
 }: ModelerControlsProps) {
+  const [internalTab, setInternalTab] = useState<"3d" | "2d">("3d");
+  const activeTab = propInspectorTab ?? internalTab;
+  const setActiveTab = propSetInspectorTab ?? setInternalTab;
+
+  const updateDrawingParam = <K extends keyof TechnicalDrawingSettings>(
+    key: K,
+    val: TechnicalDrawingSettings[K]
+  ) => {
+    setParams((prev) => ({
+      ...prev,
+      drawingSettings: {
+        ...(prev.drawingSettings || {}),
+        [key]: val,
+      },
+    }));
+  };
+
   // Collapsible Accordion Sections State
+  const [selectedSubItem, setSelectedSubItem] = useState<string>("carcass");
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     kitchenUnits: true,
     wardrobeUnits: true,
@@ -81,61 +109,89 @@ export default function ModelerControls({
   // Kitchen Modular Unit Management
   const kitchenUnits = params.kitchenUnits || [];
   const selectedUnit = kitchenUnits.find((u) => u.id === params.selectedUnitId) || kitchenUnits[0];
+  const selectedUnitIds = params.selectedUnitIds && params.selectedUnitIds.length > 0
+    ? params.selectedUnitIds
+    : (selectedUnit ? [selectedUnit.id] : []);
+  const isMultiSelected = selectedUnitIds.length > 1;
 
   const updateSelectedUnit = (updates: Partial<KitchenCabinetUnit>) => {
-    if (!selectedUnit) return;
-    const newUnits = kitchenUnits.map((u) =>
-      u.id === selectedUnit.id ? { ...u, ...updates } : u
-    );
-    setParams((prev) => ({
-      ...prev,
-      kitchenUnits: newUnits,
-    }));
+    if (isMultiSelected) {
+      const newUnits = kitchenUnits.map((u) =>
+        selectedUnitIds.includes(u.id) ? { ...u, ...updates } : u
+      );
+      setParams((prev) => ({
+        ...prev,
+        kitchenUnits: newUnits,
+      }));
+    } else if (selectedUnit) {
+      const newUnits = kitchenUnits.map((u) =>
+        u.id === selectedUnit.id ? { ...u, ...updates } : u
+      );
+      setParams((prev) => ({
+        ...prev,
+        kitchenUnits: newUnits,
+      }));
+    }
   };
 
-  const addKitchenUnit = (type: "base" | "wall") => {
+  const addKitchenUnit = (type: "base" | "wall" | "corner-base") => {
+    const isCorner = type === "corner-base";
     const existingCount = kitchenUnits.filter((u) => u.type === type).length;
     const newUnit: KitchenCabinetUnit = {
       id: `${type}-${Date.now()}`,
-      name: `${type === "base" ? "Base Cabinet" : "Upper Wall Unit"} ${existingCount + 1}`,
+      name: isCorner
+        ? `Corner Base ${existingCount + 1} (90°)`
+        : `${type === "base" ? "Base Cabinet" : "Upper Wall Unit"} ${existingCount + 1}`,
       type,
-      width: 600,
+      orientation: isCorner ? "corner-right" : "straight",
+      materialType: selectedUnit?.materialType || params.materialType,
+      width: isCorner ? 900 : 600,
       height: 720,
-      depth: type === "base" ? 600 : 350,
-      doorType: type === "base" ? "singleLeft" : "singleLeft",
+      depth: isCorner ? 900 : (type === "base" ? 600 : 350),
+      doorType: isCorner ? "cornerDouble" : "singleLeft",
       drawerCount: 0,
-      internalShelves: 2,
-      handleType: "bar",
-      handleFinish: "black",
+      internalShelves: isCorner ? 1 : 2,
+      handleType: selectedUnit?.handleType || "bar",
+      handleFinish: selectedUnit?.handleFinish || "black",
     };
     setParams((prev) => ({
       ...prev,
       kitchenUnits: [...(prev.kitchenUnits || []), newUnit],
       selectedUnitId: newUnit.id,
+      selectedUnitIds: [newUnit.id],
     }));
   };
 
   const deleteSelectedUnit = () => {
     if (kitchenUnits.length <= 1 || !selectedUnit) return;
-    const filtered = kitchenUnits.filter((u) => u.id !== selectedUnit.id);
+    const targetIds = isMultiSelected ? selectedUnitIds : [selectedUnit.id];
+    const filtered = kitchenUnits.filter((u) => !targetIds.includes(u.id));
+    const remaining = filtered.length > 0 ? filtered : [kitchenUnits[0]];
     setParams((prev) => ({
       ...prev,
-      kitchenUnits: filtered,
-      selectedUnitId: filtered[0].id,
+      kitchenUnits: remaining,
+      selectedUnitId: remaining[0].id,
+      selectedUnitIds: [remaining[0].id],
     }));
   };
 
   const duplicateSelectedUnit = () => {
     if (!selectedUnit) return;
-    const clone: KitchenCabinetUnit = {
-      ...selectedUnit,
-      id: `${selectedUnit.type}-${Date.now()}`,
-      name: `${selectedUnit.name} (Copy)`,
-    };
+    const targetUnits = isMultiSelected
+      ? kitchenUnits.filter((u) => selectedUnitIds.includes(u.id))
+      : [selectedUnit];
+
+    const clones: KitchenCabinetUnit[] = targetUnits.map((u) => ({
+      ...u,
+      id: `${u.type}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      name: `${u.name} (Copy)`,
+    }));
+
     setParams((prev) => ({
       ...prev,
-      kitchenUnits: [...(prev.kitchenUnits || []), clone],
-      selectedUnitId: clone.id,
+      kitchenUnits: [...(prev.kitchenUnits || []), ...clones],
+      selectedUnitId: clones[0].id,
+      selectedUnitIds: clones.map((c) => c.id),
     }));
   };
 
@@ -230,7 +286,7 @@ export default function ModelerControls({
     const hM = params.height / 1000;
     const dM = params.depth / 1000;
     const cols = params.internalColumns || 1;
-    const shelves = params.internalShelves || 2;
+    const shelves = params.internalShelves ?? 2;
     panelCount = 4 + (cols - 1) + cols * shelves + (params.hasBackPanel ? 1 : 0);
     areaM2 = (wM * dM * 2 + dM * hM * (2 + cols - 1) + cols * shelves * ((wM / cols) * dM)) * 1.08;
   } else {
@@ -254,13 +310,129 @@ export default function ModelerControls({
   return (
     <aside className={styles.sidebarControls}>
       <div className={styles.sidebarHeader}>
-        <h2 className={styles.sidebarTitle}>CAD Inspector</h2>
-        <span style={{ fontSize: "0.72rem", color: "var(--accent)", fontWeight: 600 }}>
-          {params.category === "Cabinet" ? "KITCHEN STUDIO" : params.category === "Wardrobe" ? "WARDROBE STUDIO" : "PARAMETRIC 3D"}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", marginBottom: "0.25rem" }}>
+          <h2 className={styles.sidebarTitle}>
+            {activeTab === "3d" ? "CAD Inspector" : "2D Drawing Settings"}
+          </h2>
+          <span style={{ fontSize: "0.72rem", color: "var(--accent)", fontWeight: 600 }}>
+            {params.category === "Cabinet" ? "KITCHEN STUDIO" : params.category === "Wardrobe" ? "WARDROBE STUDIO" : "PARAMETRIC CAD"}
+          </span>
+        </div>
+
+        {/* Tab Switcher between 3D Model Parameters & 2D Technical Sheet Settings */}
+        <div className={styles.sidebarTabGroup}>
+          <button
+            type="button"
+            onClick={() => setActiveTab("3d")}
+            className={`${styles.sidebarTabBtn} ${activeTab === "3d" ? styles.sidebarTabBtnActive : ""}`}
+            title="Edit 3D Model Parameters & Dimensions"
+          >
+            <MdTune size={14} />
+            <span>3D Model & Specs</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("2d")}
+            className={`${styles.sidebarTabBtn} ${activeTab === "2d" ? styles.sidebarTabBtnActive : ""}`}
+            title="Edit 2D Drawing Layout, Title Block & Isometric View"
+          >
+            <MdDesignServices size={14} />
+            <span>2D Sheet & Drawing</span>
+          </button>
+        </div>
       </div>
 
       <div className={styles.sidebarContent}>
+        {activeTab === "3d" ? (
+          <>
+        {/* Selected Division Status & Quick Move/Delete Card */}
+        {params.selectedDivision && (
+          <div className={styles.selectedDivisionCard}>
+            <div className={styles.divisionCardHeader}>
+              <span className={styles.divisionBadge}>
+                Selected {params.selectedDivision.type === "shelf" ? `Shelf #${(params.selectedDivision.index ?? 0) + 1}` : `Vertical Divider #${(params.selectedDivision.index ?? 0) + 1}`}
+              </span>
+              <button
+                type="button"
+                className={styles.deleteDivisionBtn}
+                onClick={() => {
+                  if (params.category === "Shelf") {
+                    if (params.selectedDivision!.type === "partition") {
+                      updateParam("internalColumns", Math.max(1, (params.internalColumns || 2) - 1));
+                    } else {
+                      updateParam("internalShelves", Math.max(0, (params.internalShelves ?? 3) - 1));
+                    }
+                    setParams((p) => ({ ...p, selectedDivision: null }));
+                  } else {
+                    params.onRemoveDivision?.(params.selectedDivision!);
+                  }
+                }}
+                title="Remove selected division"
+              >
+                <MdDeleteOutline size={14} /> Remove
+              </button>
+            </div>
+
+            {/* If Shelf: Move Slider & CadNumberInput */}
+            {params.category === "Shelf" && (
+              <div style={{ marginTop: "0.5rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.3rem" }}>
+                  <span style={{ fontSize: "0.72rem", color: "#cbd5e1", fontWeight: 600 }}>
+                    {params.selectedDivision.type === "partition" ? "Horizontal Move (X)" : "Vertical Move (Y)"}
+                  </span>
+                  <CadNumberInput
+                    value={
+                      params.selectedDivision.type === "partition"
+                        ? (params.shelfColumnOffsets?.[params.selectedDivision.index ?? 0] ?? 0)
+                        : (params.shelfRowOffsets?.[params.selectedDivision.index ?? 0] ?? 0)
+                    }
+                    onChange={(val) => {
+                      const idx = params.selectedDivision!.index ?? 0;
+                      if (params.selectedDivision!.type === "partition") {
+                        const cur = [...(params.shelfColumnOffsets || [])];
+                        cur[idx] = val;
+                        updateParam("shelfColumnOffsets", cur);
+                      } else {
+                        const cur = [...(params.shelfRowOffsets || [])];
+                        cur[idx] = val;
+                        updateParam("shelfRowOffsets", cur);
+                      }
+                    }}
+                    min={-250}
+                    max={250}
+                    step={5}
+                    unit="mm"
+                  />
+                </div>
+                <input
+                  type="range"
+                  min={-200}
+                  max={200}
+                  step={5}
+                  value={
+                    params.selectedDivision.type === "partition"
+                      ? (params.shelfColumnOffsets?.[params.selectedDivision.index ?? 0] ?? 0)
+                      : (params.shelfRowOffsets?.[params.selectedDivision.index ?? 0] ?? 0)
+                  }
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    const idx = params.selectedDivision!.index ?? 0;
+                    if (params.selectedDivision!.type === "partition") {
+                      const cur = [...(params.shelfColumnOffsets || [])];
+                      cur[idx] = val;
+                      updateParam("shelfColumnOffsets", cur);
+                    } else {
+                      const cur = [...(params.shelfRowOffsets || [])];
+                      cur[idx] = val;
+                      updateParam("shelfRowOffsets", cur);
+                    }
+                  }}
+                  className={styles.rangeSlider}
+                />
+              </div>
+            )}
+          </div>
+        )}
         {/* Basic Info: Name & Category */}
         <div className={styles.controlGroup}>
           <label className={styles.groupLabel}>Furniture Name</label>
@@ -291,13 +463,80 @@ export default function ModelerControls({
           </div>
         </div>
 
-        {/* KITCHEN MULTI-CABINET SUITE MANAGER (When category is Cabinet) */}
+        
+        {/* KITCHEN MULTI-CABINET OUTLINER TREE (When category is Cabinet) */}
         {params.category === "Cabinet" && (
-          <div
-            className={`${styles.accordionSection} ${
-              openSections.kitchenUnits ? styles.accordionSectionOpen : ""
-            }`}
-          >
+          <>
+            {/* Dedicated Batch Editing Card when Multiple Cabinets are Selected */}
+            {isMultiSelected && (
+              <div className={styles.batchSelectionCard}>
+                <div className={styles.batchHeader}>
+                  <div className={styles.batchTitleGroup}>
+                    <span className={styles.batchIcon}>🔲</span>
+                    <div>
+                      <div className={styles.batchTitle}>
+                        BATCH EDITING ({selectedUnitIds.length} Cabinets Selected)
+                      </div>
+                      <div className={styles.batchSub}>
+                        Changes below apply simultaneously to all selected cabinets
+                      </div>
+                    </div>
+                  </div>
+                  <div className={styles.batchBtnRow}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allIds = kitchenUnits.map((u) => u.id);
+                        setParams((p) => ({ ...p, selectedUnitIds: allIds }));
+                      }}
+                      className={styles.batchBtn}
+                    >
+                      Select All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setParams((p) => ({ ...p, selectedUnitIds: [selectedUnit.id] }));
+                      }}
+                      className={styles.batchBtn}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+
+                {/* Selected Unit Chips */}
+                <div className={styles.batchChips}>
+                  {selectedUnitIds.map((id) => {
+                    const u = kitchenUnits.find((k) => k.id === id);
+                    return (
+                      <span key={id} className={styles.batchChip}>
+                        {u?.type === "corner-base" ? "🔄" : u?.type === "wall" ? "⬆️" : "📦"} {u?.name || id}
+                        <span
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const next = selectedUnitIds.filter((x) => x !== id);
+                            if (next.length > 0) {
+                              setParams((p) => ({ ...p, selectedUnitIds: next, selectedUnitId: next[0] }));
+                            }
+                          }}
+                          style={{ cursor: "pointer", marginLeft: "5px", color: "#f87171", fontWeight: 700 }}
+                          title="Remove from batch selection"
+                        >
+                          ×
+                        </span>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div
+              className={`${styles.accordionSection} ${
+                openSections.kitchenUnits ? styles.accordionSectionOpen : ""
+              }`}
+            >
             <button
               type="button"
               className={styles.accordionHeader}
@@ -305,43 +544,304 @@ export default function ModelerControls({
             >
               <div className={styles.accordionTitleGroup}>
                 <MdLayers size={16} color="var(--accent)" />
-                <span>Kitchen Cabinets ({kitchenUnits.length} Units)</span>
+                <span>Cabinets & Nested Divisions ({kitchenUnits.length})</span>
               </div>
               {openSections.kitchenUnits ? <MdExpandMore size={18} /> : <MdChevronRight size={18} />}
             </button>
 
             {openSections.kitchenUnits && (
               <div className={styles.accordionBody}>
-                {/* Unit Selector Chips */}
-                <div className={styles.unitChipList}>
+                {/* Outliner Hierarchy Tree */}
+                <div className={styles.hierarchyTree}>
                   {kitchenUnits.map((u) => {
+                    const isMulti = selectedUnitIds.includes(u.id);
                     const isSelected = selectedUnit?.id === u.id;
                     return (
-                      <button
+                      <div
                         key={u.id}
-                        type="button"
-                        onClick={() => updateParam("selectedUnitId", u.id)}
-                        className={`${styles.unitChip} ${
-                          isSelected ? styles.unitChipActive : ""
-                        }`}
+                        className={`${styles.treeUnitBlock} ${isMulti ? styles.treeUnitBlockActive : ""}`}
                       >
-                        <span>{u.type === "base" ? "📦" : "⬆️"}</span>
-                        <span>{u.name || (u.type === "base" ? "Base" : "Wall")}</span>
-                        <span style={{ opacity: 0.7, fontSize: "0.7rem" }}>({u.width}mm)</span>
-                      </button>
+                        {/* Unit Parent Row */}
+                        <div
+                          className={`${styles.treeUnitHeader} ${isMulti ? styles.treeUnitHeaderActive : ""}`}
+                          onClick={(e) => {
+                            if (e.shiftKey) {
+                              const next = selectedUnitIds.includes(u.id)
+                                ? selectedUnitIds.filter((id) => id !== u.id)
+                                : [...selectedUnitIds, u.id];
+                              const finalIds = next.length > 0 ? next : [u.id];
+                              setParams((p) => ({ ...p, selectedUnitIds: finalIds, selectedUnitId: finalIds[finalIds.length - 1] }));
+                            } else {
+                              setParams((p) => ({ ...p, selectedUnitIds: [u.id], selectedUnitId: u.id }));
+                            }
+                          }}
+                        >
+                          <div className={styles.treeUnitInfo}>
+                            <input
+                              type="checkbox"
+                              checked={isMulti}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                const next = isMulti
+                                  ? selectedUnitIds.filter((id) => id !== u.id)
+                                  : [...selectedUnitIds, u.id];
+                                const finalIds = next.length > 0 ? next : [u.id];
+                                setParams((p) => ({ ...p, selectedUnitIds: finalIds, selectedUnitId: finalIds[finalIds.length - 1] }));
+                              }}
+                              style={{ cursor: "pointer", accentColor: "#0284c7" }}
+                            />
+                            <span>{u.type === "corner-base" ? "🔄" : u.type === "base" ? "📦" : "⬆️"}</span>
+                            <span className={styles.treeUnitName}>{u.name || (u.type === "corner-base" ? "Corner Base" : u.type === "base" ? "Base" : "Wall")}</span>
+                            <span className={styles.treeUnitDim}>({u.width}×{u.height}×{u.depth}mm)</span>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                            {isMulti && <span className={styles.treeActiveBadge}>SELECTED</span>}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  duplicateSelectedUnit();
+                                }}
+                                style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", padding: "2px" }}
+                                title="Duplicate cabinet"
+                              >
+                                <MdContentCopy size={13} />
+                              </button>
+                              {kitchenUnits.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteSelectedUnit();
+                                  }}
+                                  style={{ background: "transparent", border: "none", color: "#f87171", cursor: "pointer", padding: "2px" }}
+                                  title="Delete cabinet"
+                                >
+                                <MdDeleteOutline size={14} />
+                              </button>
+                              )}
+                            </div>
+                        </div>
+
+                        {/* Nested Divisions (Shown for Selected Unit) */}
+                        {isSelected && (
+                          <div className={styles.treeChildren}>
+                            {/* Node 1: Carcass Dimensions */}
+                            <div className={`${styles.treeNode} ${selectedSubItem === "carcass" ? styles.treeNodeActive : ""}`}>
+                              <div
+                                className={styles.treeNodeRow}
+                                onClick={() => setSelectedSubItem(selectedSubItem === "carcass" ? "" : "carcass")}
+                              >
+                                <span>📏 Carcass Dimensions</span>
+                                <span className={styles.treeNodeBadge}>{u.width} × {u.height} mm</span>
+                              </div>
+                              {selectedSubItem === "carcass" && (
+                                <div className={styles.treeNodeDrawer}>
+                                  <div className={styles.sliderHead}>
+                                    <span className={styles.sliderName}>Width (X)</span>
+                                    <CadNumberInput
+                                      value={u.width}
+                                      onChange={(val) => updateSelectedUnit({ width: val })}
+                                      min={300}
+                                      max={1400}
+                                      unit="mm"
+                                    />
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min={300}
+                                    max={1400}
+                                    step={10}
+                                    value={u.width}
+                                    onChange={(e) => updateSelectedUnit({ width: Number(e.target.value) })}
+                                    className={styles.rangeSlider}
+                                  />
+
+                                  <div className={styles.sliderHead} style={{ marginTop: "0.4rem" }}>
+                                    <span className={styles.sliderName}>Height (Y)</span>
+                                    <CadNumberInput
+                                      value={u.height}
+                                      onChange={(val) => updateSelectedUnit({ height: val })}
+                                      min={350}
+                                      max={1200}
+                                      unit="mm"
+                                    />
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min={350}
+                                    max={1200}
+                                    step={10}
+                                    value={u.height}
+                                    onChange={(e) => updateSelectedUnit({ height: Number(e.target.value) })}
+                                    className={styles.rangeSlider}
+                                  />
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Node 2: Door Facade */}
+                            <div className={`${styles.treeNode} ${selectedSubItem === "doors" ? styles.treeNodeActive : ""}`}>
+                              <div
+                                className={styles.treeNodeRow}
+                                onClick={() => setSelectedSubItem(selectedSubItem === "doors" ? "" : "doors")}
+                              >
+                                <span>🚪 Door Facade</span>
+                                <span className={styles.treeNodeBadge}>
+                                  {u.doorType === "none" ? "Open" : u.doorType === "singleLeft" ? "Single L" : u.doorType === "singleRight" ? "Single R" : u.doorType === "double" ? "Double" : "Flip-Up"}
+                                </span>
+                              </div>
+                              {selectedSubItem === "doors" && (
+                                <div className={styles.treeNodeDrawer}>
+                                  <div className={styles.segmentedGrid3}>
+                                    {[
+                                      { id: "none", label: "Open" },
+                                      { id: "singleLeft", label: "Single L" },
+                                      { id: "singleRight", label: "Single R" },
+                                      { id: "double", label: "Double" },
+                                      { id: "flipUp", label: "Flip-Up" },
+                                    ].map((d) => (
+                                      <button
+                                        key={d.id}
+                                        type="button"
+                                        onClick={() => updateSelectedUnit({ doorType: d.id as KitchenCabinetUnit["doorType"] })}
+                                        className={`${styles.segmentedBtn} ${u.doorType === d.id ? styles.segmentedBtnActive : ""}`}
+                                      >
+                                        {d.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Node 3: Interior Shelves */}
+                            <div className={`${styles.treeNode} ${selectedSubItem === "shelves" ? styles.treeNodeActive : ""}`}>
+                              <div
+                                className={styles.treeNodeRow}
+                                onClick={() => setSelectedSubItem(selectedSubItem === "shelves" ? "" : "shelves")}
+                              >
+                                <span>📚 Interior Shelves</span>
+                                <span className={styles.treeNodeBadge}>{u.internalShelves ?? 0} Shelves</span>
+                              </div>
+                              {selectedSubItem === "shelves" && (
+                                <div className={styles.treeNodeDrawer}>
+                                  <div className={styles.segmentedGrid6}>
+                                    {[0, 1, 2, 3, 4, 5].map((s) => (
+                                      <button
+                                        key={s}
+                                        type="button"
+                                        onClick={() => updateSelectedUnit({ internalShelves: s })}
+                                        className={`${styles.segmentedBtn} ${(u.internalShelves ?? 0) === s ? styles.segmentedBtnActive : ""}`}
+                                      >
+                                        {s}
+                                      </button>
+                                    ))}
+                                  </div>
+
+                                  {(u.internalShelves ?? 0) > 0 && (
+                                    <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginTop: "0.35rem" }}>
+                                      {Array.from({ length: u.internalShelves ?? 0 }).map((_, si) => {
+                                        const isShelfSelected =
+                                          params.selectedDivision?.unitId === u.id &&
+                                          params.selectedDivision?.type === "shelf" &&
+                                          params.selectedDivision?.index === si;
+                                        return (
+                                          <div
+                                            key={`shelf-item-${si}`}
+                                            style={{
+                                              display: "flex",
+                                              alignItems: "center",
+                                              justifyContent: "space-between",
+                                              padding: "0.25rem 0.5rem",
+                                              background: isShelfSelected ? "rgba(245, 158, 11, 0.15)" : "rgba(255,255,255,0.03)",
+                                              border: isShelfSelected ? "1px solid rgba(245, 158, 11, 0.4)" : "1px solid rgba(255,255,255,0.06)",
+                                              borderRadius: "5px",
+                                              fontSize: "0.72rem",
+                                            }}
+                                          >
+                                            <span
+                                              style={{ cursor: "pointer", color: isShelfSelected ? "#f59e0b" : "#cbd5e1", flex: 1 }}
+                                              onClick={() => params.onSelectDivision?.({ unitId: u.id, type: "shelf", index: si })}
+                                            >
+                                              Shelf {si + 1}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              onClick={() => params.onRemoveDivision?.({ unitId: u.id, type: "shelf", index: si })}
+                                              style={{
+                                                background: "transparent",
+                                                border: "none",
+                                                color: "#f87171",
+                                                cursor: "pointer",
+                                                padding: "2px",
+                                                display: "flex",
+                                                alignItems: "center",
+                                              }}
+                                              title={`Delete Shelf ${si + 1}`}
+                                            >
+                                              <MdDeleteOutline size={14} />
+                                            </button>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Node 4: Drawers */}
+                            <div className={`${styles.treeNode} ${selectedSubItem === "drawers" ? styles.treeNodeActive : ""}`}>
+                              <div
+                                className={styles.treeNodeRow}
+                                onClick={() => setSelectedSubItem(selectedSubItem === "drawers" ? "" : "drawers")}
+                              >
+                                <span>🗄️ Drawers</span>
+                                <span className={styles.treeNodeBadge}>{(u.drawerCount || 0) > 0 ? `${u.drawerCount} Drawers` : "None"}</span>
+                              </div>
+                              {selectedSubItem === "drawers" && (
+                                <div className={styles.treeNodeDrawer}>
+                                  <div className={styles.segmentedGrid5}>
+                                    {[0, 1, 2, 3, 4].map((cnt) => (
+                                      <button
+                                        key={cnt}
+                                        type="button"
+                                        onClick={() => updateSelectedUnit({ drawerCount: cnt })}
+                                        className={`${styles.segmentedBtn} ${(u.drawerCount || 0) === cnt ? styles.segmentedBtnActive : ""}`}
+                                      >
+                                        {cnt === 0 ? "None" : `${cnt}x`}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
 
                 {/* Add Actions */}
-                <div style={{ display: "flex", gap: "0.5rem" }}>
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                   <button
                     type="button"
                     onClick={() => addKitchenUnit("base")}
                     className={styles.unitAddBtn}
                   >
                     <MdAdd size={14} />
-                    <span>+ Add Base Cabinet</span>
+                    <span>+ Add Base</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => addKitchenUnit("corner-base")}
+                    className={styles.unitAddBtn}
+                    style={{ borderColor: "rgba(52, 211, 153, 0.4)", color: "#34d399" }}
+                  >
+                    <MdTurnRight size={14} color="#34d399" />
+                    <span>+ Add 90° Corner Base</span>
                   </button>
                   <button
                     type="button"
@@ -349,42 +849,18 @@ export default function ModelerControls({
                     className={styles.unitAddBtn}
                   >
                     <MdAdd size={14} />
-                    <span>+ Add Wall Cabinet</span>
+                    <span>+ Add Wall Unit</span>
                   </button>
                 </div>
-
-                {/* Active Unit Action Bar */}
-                {selectedUnit && (
-                  <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.2rem" }}>
-                    <button
-                      type="button"
-                      onClick={duplicateSelectedUnit}
-                      className={styles.segmentedBtn}
-                      style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.3rem" }}
-                    >
-                      <MdContentCopy size={13} />
-                      <span>Duplicate Unit</span>
-                    </button>
-                    {kitchenUnits.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={deleteSelectedUnit}
-                        className={styles.deleteUnitBtn}
-                        style={{ margin: 0, padding: "0.45rem 0.65rem" }}
-                        title="Delete selected cabinet unit"
-                      >
-                        <MdDeleteOutline size={15} />
-                      </button>
-                    )}
-                  </div>
-                )}
               </div>
             )}
           </div>
+          </>
         )}
 
 
-        {/* WARDROBE MULTI-SECTION MANAGER (When category is Wardrobe) */}
+        
+        {/* WARDROBE MULTI-SECTION OUTLINER TREE (When category is Wardrobe) */}
         {params.category === "Wardrobe" && (
           <div
             className={`${styles.accordionSection} ${
@@ -398,30 +874,285 @@ export default function ModelerControls({
             >
               <div className={styles.accordionTitleGroup}>
                 <MdLayers size={16} color="var(--accent)" />
-                <span>Wardrobe Divisions (${wardrobeUnits.length} Units)</span>
+                <span>Wardrobe & Nested Divisions ({wardrobeUnits.length})</span>
               </div>
               {openSections.wardrobeUnits ? <MdExpandMore size={18} /> : <MdChevronRight size={18} />}
             </button>
 
             {openSections.wardrobeUnits && (
               <div className={styles.accordionBody}>
-                {/* Unit Selector Chips */}
-                <div className={styles.unitChipList}>
+                {/* Outliner Hierarchy Tree */}
+                <div className={styles.hierarchyTree}>
                   {wardrobeUnits.map((u) => {
                     const isSelected = selectedWardrobeUnit?.id === u.id;
                     return (
-                      <button
+                      <div
                         key={u.id}
-                        type="button"
-                        onClick={() => updateParam("selectedWardrobeUnitId", u.id)}
-                        className={`${styles.unitChip} ${
-                          isSelected ? styles.unitChipActive : ""
-                        }`}
+                        className={`${styles.treeUnitBlock} ${isSelected ? styles.treeUnitBlockActive : ""}`}
                       >
-                        <span>{u.type === "main" ? "🚪" : "⬆️"}</span>
-                        <span>{u.name || (u.type === "main" ? "Division" : "Top")}</span>
-                        <span style={{ opacity: 0.7, fontSize: "0.7rem" }}>({u.width}mm)</span>
-                      </button>
+                        {/* Parent Division Row */}
+                        <div
+                          className={`${styles.treeUnitHeader} ${isSelected ? styles.treeUnitHeaderActive : ""}`}
+                          onClick={() => updateParam("selectedWardrobeUnitId", u.id)}
+                        >
+                          <div className={styles.treeUnitInfo}>
+                            <span>{u.type === "main" ? "🚪" : "⬆️"}</span>
+                            <span className={styles.treeUnitName}>{u.name || (u.type === "main" ? "Division" : "Top Bridge")}</span>
+                            <span className={styles.treeUnitDim}>({u.width}×{u.height}×{u.depth}mm)</span>
+                          </div>
+                          {isSelected && (
+                            <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                              <span className={styles.treeActiveBadge}>ACTIVE</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  duplicateSelectedWardrobeUnit();
+                                }}
+                                style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", padding: "2px" }}
+                                title="Duplicate division"
+                              >
+                                <MdContentCopy size={13} />
+                              </button>
+                              {wardrobeUnits.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteSelectedWardrobeUnit();
+                                  }}
+                                  style={{ background: "transparent", border: "none", color: "#f87171", cursor: "pointer", padding: "2px" }}
+                                  title="Delete division"
+                                >
+                                <MdDeleteOutline size={14} />
+                              </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Nested Divisions (Shown for Selected Division) */}
+                        {isSelected && (
+                          <div className={styles.treeChildren}>
+                            {/* Node 1: Carcass Dimensions */}
+                            <div className={`${styles.treeNode} ${selectedSubItem === "carcass" ? styles.treeNodeActive : ""}`}>
+                              <div
+                                className={styles.treeNodeRow}
+                                onClick={() => setSelectedSubItem(selectedSubItem === "carcass" ? "" : "carcass")}
+                              >
+                                <span>📏 Division Dimensions</span>
+                                <span className={styles.treeNodeBadge}>{u.width} × {u.height} mm</span>
+                              </div>
+                              {selectedSubItem === "carcass" && (
+                                <div className={styles.treeNodeDrawer}>
+                                  <div className={styles.sliderHead}>
+                                    <span className={styles.sliderName}>Width (X)</span>
+                                    <CadNumberInput
+                                      value={u.width}
+                                      onChange={(val) => updateSelectedWardrobeUnit({ width: val })}
+                                      min={400}
+                                      max={1400}
+                                      unit="mm"
+                                    />
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min={400}
+                                    max={1400}
+                                    step={20}
+                                    value={u.width}
+                                    onChange={(e) => updateSelectedWardrobeUnit({ width: Number(e.target.value) })}
+                                    className={styles.rangeSlider}
+                                  />
+
+                                  <div className={styles.sliderHead} style={{ marginTop: "0.4rem" }}>
+                                    <span className={styles.sliderName}>Height (Y)</span>
+                                    <CadNumberInput
+                                      value={u.height}
+                                      onChange={(val) => updateSelectedWardrobeUnit({ height: val })}
+                                      min={u.type === "top" ? 300 : 1600}
+                                      max={u.type === "top" ? 900 : 2600}
+                                      unit="mm"
+                                    />
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min={u.type === "top" ? 300 : 1600}
+                                    max={u.type === "top" ? 900 : 2600}
+                                    step={20}
+                                    value={u.height}
+                                    onChange={(e) => updateSelectedWardrobeUnit({ height: Number(e.target.value) })}
+                                    className={styles.rangeSlider}
+                                  />
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Node 2: Door Style & Mirror */}
+                            <div className={`${styles.treeNode} ${selectedSubItem === "doors" ? styles.treeNodeActive : ""}`}>
+                              <div
+                                className={styles.treeNodeRow}
+                                onClick={() => setSelectedSubItem(selectedSubItem === "doors" ? "" : "doors")}
+                              >
+                                <span>🚪 Door Facade & Mirror</span>
+                                <span className={styles.treeNodeBadge}>
+                                  {u.doorType === "sliding" ? "Sliding" : u.doorType === "hingedDouble" ? "Hinged 2x" : u.doorType === "hingedSingle" ? "Hinged 1x" : "Open"}
+                                  {u.hasMirror ? " (Mirror)" : ""}
+                                </span>
+                              </div>
+                              {selectedSubItem === "doors" && (
+                                <div className={styles.treeNodeDrawer}>
+                                  <div className={styles.segmentedGrid4}>
+                                    {[
+                                      { id: "sliding", label: "Sliding" },
+                                      { id: "hingedDouble", label: "Hinged 2x" },
+                                      { id: "hingedSingle", label: "Hinged 1x" },
+                                      { id: "open", label: "Open" },
+                                    ].map((d) => (
+                                      <button
+                                        key={d.id}
+                                        type="button"
+                                        onClick={() => updateSelectedWardrobeUnit({ doorType: d.id as WardrobeUnit["doorType"] })}
+                                        className={`${styles.segmentedBtn} ${u.doorType === d.id ? styles.segmentedBtnActive : ""}`}
+                                      >
+                                        {d.label}
+                                      </button>
+                                    ))}
+                                  </div>
+
+                                  {u.doorType !== "open" && (
+                                    <div className={styles.segmentedGrid3} style={{ marginTop: "0.3rem" }}>
+                                      {[
+                                        { label: "Wood Door", mirror: false, type: "full" },
+                                        { label: "Full Mirror", mirror: true, type: "full" },
+                                        { label: "Center Mirror", mirror: true, type: "center" },
+                                      ].map((m, mi) => {
+                                        const isMatch = !m.mirror ? !u.hasMirror : u.hasMirror && u.mirrorType === m.type;
+                                        return (
+                                          <button
+                                            key={mi}
+                                            type="button"
+                                            onClick={() => updateSelectedWardrobeUnit({ hasMirror: m.mirror, mirrorType: m.type as WardrobeUnit["mirrorType"] })}
+                                            className={`${styles.segmentedBtn} ${isMatch ? styles.segmentedBtnActive : ""}`}
+                                          >
+                                            {m.label}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Node 3: Hanging Rod & Partition */}
+                            <div className={`${styles.treeNode} ${selectedSubItem === "interior" ? styles.treeNodeActive : ""}`}>
+                              <div
+                                className={styles.treeNodeRow}
+                                onClick={() => setSelectedSubItem(selectedSubItem === "interior" ? "" : "interior")}
+                              >
+                                <span>👔 Hanging Rod & Partition</span>
+                                <span className={styles.treeNodeBadge}>
+                                  {u.hasClothesHangerRail ? "Rod On" : "No Rod"}
+                                </span>
+                              </div>
+                              {selectedSubItem === "interior" && (
+                                <div className={styles.treeNodeDrawer}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <span style={{ fontSize: "0.74rem", color: "#cbd5e1" }}>Clothes Hanging Rod</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateSelectedWardrobeUnit({ hasClothesHangerRail: !u.hasClothesHangerRail })}
+                                      className={`${styles.toggleTrack} ${u.hasClothesHangerRail ? styles.toggleTrackActive : ""}`}
+                                    >
+                                      <div className={`${styles.toggleKnob} ${u.hasClothesHangerRail ? styles.toggleKnobActive : ""}`} />
+                                    </button>
+                                  </div>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.3rem" }}>
+                                    <span style={{ fontSize: "0.74rem", color: "#cbd5e1" }}>Center Vertical Partition</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateSelectedWardrobeUnit({ hasInternalDivider: !u.hasInternalDivider })}
+                                      className={`${styles.toggleTrack} ${u.hasInternalDivider ? styles.toggleTrackActive : ""}`}
+                                    >
+                                      <div className={`${styles.toggleKnob} ${u.hasInternalDivider ? styles.toggleKnobActive : ""}`} />
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Node 4: Shelves */}
+                            <div className={`${styles.treeNode} ${selectedSubItem === "shelves" ? styles.treeNodeActive : ""}`}>
+                              <div
+                                className={styles.treeNodeRow}
+                                onClick={() => setSelectedSubItem(selectedSubItem === "shelves" ? "" : "shelves")}
+                              >
+                                <span>📚 Shelves</span>
+                                <span className={styles.treeNodeBadge}>{u.internalShelves ?? 0} Shelves</span>
+                              </div>
+                              {selectedSubItem === "shelves" && (
+                                <div className={styles.treeNodeDrawer}>
+                                  <div className={styles.segmentedGrid6}>
+                                    {[0, 1, 2, 3, 4, 5].map((s) => (
+                                      <button
+                                        key={s}
+                                        type="button"
+                                        onClick={() => updateSelectedWardrobeUnit({ internalShelves: s })}
+                                        className={`${styles.segmentedBtn} ${(u.internalShelves ?? 0) === s ? styles.segmentedBtnActive : ""}`}
+                                      >
+                                        {s}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Node 5: Drawers */}
+                            <div className={`${styles.treeNode} ${selectedSubItem === "drawers" ? styles.treeNodeActive : ""}`}>
+                              <div
+                                className={styles.treeNodeRow}
+                                onClick={() => setSelectedSubItem(selectedSubItem === "drawers" ? "" : "drawers")}
+                              >
+                                <span>🗄️ Drawers</span>
+                                <span className={styles.treeNodeBadge}>{u.hasDrawers ? `${u.drawerCount} Drawers` : "None"}</span>
+                              </div>
+                              {selectedSubItem === "drawers" && (
+                                <div className={styles.treeNodeDrawer}>
+                                  <div className={styles.segmentedGrid2} style={{ marginBottom: "0.4rem" }}>
+                                    {[
+                                      { id: "externalBottom", label: "External Bottom" },
+                                      { id: "internal", label: "Internal" },
+                                    ].map((p) => (
+                                      <button
+                                        key={p.id}
+                                        type="button"
+                                        onClick={() => updateSelectedWardrobeUnit({ drawerType: p.id as WardrobeUnit["drawerType"] })}
+                                        className={`${styles.segmentedBtn} ${(u.drawerType || "externalBottom") === p.id ? styles.segmentedBtnActive : ""}`}
+                                      >
+                                        {p.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <div className={styles.segmentedGrid5}>
+                                    {[0, 1, 2, 3, 4].map((cnt) => (
+                                      <button
+                                        key={cnt}
+                                        type="button"
+                                        onClick={() => updateSelectedWardrobeUnit({ hasDrawers: cnt > 0, drawerCount: cnt })}
+                                        className={`${styles.segmentedBtn} ${(u.drawerCount || 0) === cnt ? styles.segmentedBtnActive : ""}`}
+                                      >
+                                        {cnt === 0 ? "None" : `${cnt}x`}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -442,39 +1173,14 @@ export default function ModelerControls({
                     className={styles.unitAddBtn}
                   >
                     <MdAdd size={14} />
-                    <span>+ Add Top Unit</span>
+                    <span>+ Add Top Bridge</span>
                   </button>
                 </div>
-
-                {/* Active Unit Action Bar */}
-                {selectedWardrobeUnit && (
-                  <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.2rem" }}>
-                    <button
-                      type="button"
-                      onClick={duplicateSelectedWardrobeUnit}
-                      className={styles.segmentedBtn}
-                      style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.3rem" }}
-                    >
-                      <MdContentCopy size={13} />
-                      <span>Duplicate Unit</span>
-                    </button>
-                    {wardrobeUnits.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={deleteSelectedWardrobeUnit}
-                        className={styles.deleteUnitBtn}
-                        style={{ margin: 0, padding: "0.45rem 0.65rem" }}
-                        title="Delete selected division"
-                      >
-                        <MdDeleteOutline size={15} />
-                      </button>
-                    )}
-                  </div>
-                )}
               </div>
             )}
           </div>
         )}
+
 
         {/* SECTION 1: DIMENSIONS */}
         <div
@@ -573,6 +1279,106 @@ export default function ModelerControls({
                 </>
               ) : params.category === "Cabinet" && selectedUnit ? (
                 <>
+                  {/* Cabinet Type & Run Orientation Switcher */}
+                  <div className={styles.controlGroup}>
+                    <label className={styles.groupLabel}>Cabinet Type & Orientation</label>
+                    <div className={styles.segmentedGrid3}>
+                      {[
+                        { id: "base", label: "Straight Base" },
+                        { id: "corner-base", label: "90° Corner Base" },
+                        { id: "wall", label: "Wall Unit" },
+                      ].map((t) => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => {
+                            if (t.id === "corner-base") {
+                              updateSelectedUnit({
+                                type: "corner-base",
+                                orientation: "corner-right",
+                                width: 900,
+                                depth: 900,
+                                doorType: "cornerDouble",
+                              });
+                            } else if (t.id === "base") {
+                              updateSelectedUnit({
+                                type: "base",
+                                orientation: "straight",
+                                width: selectedUnit.width === 900 ? 600 : selectedUnit.width,
+                                depth: 600,
+                                doorType: "singleLeft",
+                              });
+                            } else {
+                              updateSelectedUnit({
+                                type: "wall",
+                                depth: 350,
+                                doorType: "singleLeft",
+                              });
+                            }
+                          }}
+                          className={`${styles.segmentedBtn} ${
+                            (selectedUnit.type || "base") === t.id ? styles.segmentedBtnActive : ""
+                          }`}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Corner Turn Direction (If Corner Base) */}
+                  {selectedUnit.type === "corner-base" && (
+                    <div className={styles.controlGroup}>
+                      <label className={styles.groupLabel}>L-Shape Corner Direction</label>
+                      <div className={styles.segmentedGrid2}>
+                        {[
+                          { id: "corner-right", label: "Turn Right (+90°)" },
+                          { id: "corner-left", label: "Turn Left (-90°)" },
+                        ].map((dir) => (
+                          <button
+                            key={dir.id}
+                            type="button"
+                            onClick={() => updateSelectedUnit({ orientation: dir.id as KitchenCabinetUnit["orientation"] })}
+                            className={`${styles.segmentedBtn} ${
+                              (selectedUnit.orientation || "corner-right") === dir.id ? styles.segmentedBtnActive : ""
+                            }`}
+                          >
+                            {dir.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Individual Cabinet Material Selector */}
+                  <div className={styles.controlGroup}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.3rem" }}>
+                      <label className={styles.groupLabel} style={{ marginBottom: 0 }}>
+                        {isMultiSelected ? `Material (${selectedUnitIds.length} Selected)` : `Cabinet Material: ${selectedUnit.name}`}
+                      </label>
+                      <span style={{ fontSize: "0.72rem", color: "#38bdf8", fontWeight: 700 }}>
+                        {MATERIALS.find((m) => m.id === (selectedUnit.materialType || params.materialType))?.name}
+                      </span>
+                    </div>
+                    <div className={styles.materialGrid}>
+                      {MATERIALS.map((m) => {
+                        const activeMat = selectedUnit.materialType || params.materialType;
+                        const isActive = activeMat === m.id;
+                        return (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => updateSelectedUnit({ materialType: m.id })}
+                            className={`${styles.materialOption} ${isActive ? styles.materialOptionActive : ""}`}
+                          >
+                            <span className={styles.materialSwatch} style={{ backgroundColor: m.color }} />
+                            <span className={styles.materialName}>{m.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   {/* Selected Kitchen Cabinet Dimensions */}
                   <div className={styles.sliderCard}>
                     <div className={styles.sliderHead}>
@@ -711,12 +1517,14 @@ export default function ModelerControls({
                 </>
               )}
 
-              {/* Board Thickness */}
+              {/* Board Thickness (Default 18mm) */}
               <div className={styles.sliderCard}>
                 <div className={styles.sliderHead}>
-                  <span className={styles.sliderName}>Board Thickness</span>
+                  <span className={styles.sliderName}>
+                    {params.category === "Table" || params.category === "Desk" ? "Frame / Apron Thickness" : "Board Thickness"}
+                  </span>
                   <CadNumberInput
-                    value={params.boardThickness || (params.category === "Table" || params.category === "Desk" ? 30 : 18)}
+                    value={params.boardThickness || 18}
                     onChange={(val) => updateParam("boardThickness", val)}
                     min={12}
                     max={60}
@@ -728,11 +1536,60 @@ export default function ModelerControls({
                   min={12}
                   max={60}
                   step={2}
-                  value={params.boardThickness || (params.category === "Table" || params.category === "Desk" ? 30 : 18)}
+                  value={params.boardThickness || 18}
                   onChange={(e) => updateParam("boardThickness", Number(e.target.value))}
                   className={styles.rangeSlider}
                 />
               </div>
+
+              {/* Table Top Board Thickness Option */}
+              {(params.category === "Table" || params.category === "Desk") && (
+                <>
+                  <div className={styles.sliderCard}>
+                    <div className={styles.sliderHead}>
+                      <span className={styles.sliderName}>Top Board Thickness</span>
+                      <CadNumberInput
+                        value={params.tableTopThickness ?? 25}
+                        onChange={(val) => updateParam("tableTopThickness", val)}
+                        min={12}
+                        max={80}
+                        unit="mm"
+                      />
+                    </div>
+                    <input
+                      type="range"
+                      min={12}
+                      max={80}
+                      step={1}
+                      value={params.tableTopThickness ?? 25}
+                      onChange={(e) => updateParam("tableTopThickness", Number(e.target.value))}
+                      className={styles.rangeSlider}
+                    />
+                  </div>
+
+                  <div className={styles.sliderCard}>
+                    <div className={styles.sliderHead}>
+                      <span className={styles.sliderName}>Apron Rail Height</span>
+                      <CadNumberInput
+                        value={params.apronHeight ?? 65}
+                        onChange={(val) => updateParam("apronHeight", val)}
+                        min={30}
+                        max={120}
+                        unit="mm"
+                      />
+                    </div>
+                    <input
+                      type="range"
+                      min={30}
+                      max={120}
+                      step={5}
+                      value={params.apronHeight ?? 65}
+                      onChange={(e) => updateParam("apronHeight", Number(e.target.value))}
+                      className={styles.rangeSlider}
+                    />
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -782,27 +1639,51 @@ export default function ModelerControls({
                   </div>
 
                   {params.baseType !== "floating" && (
-                    <div className={styles.sliderCard}>
-                      <div className={styles.sliderHead}>
-                        <span className={styles.sliderName}>Plinth Height</span>
-                        <CadNumberInput
-                          value={params.plinthHeight || 80}
-                          onChange={(val) => updateParam("plinthHeight", val)}
+                    <>
+                      <div className={styles.sliderCard}>
+                        <div className={styles.sliderHead}>
+                          <span className={styles.sliderName}>Plinth Height</span>
+                          <CadNumberInput
+                            value={params.plinthHeight || 80}
+                            onChange={(val) => updateParam("plinthHeight", val)}
+                            min={40}
+                            max={160}
+                            unit="mm"
+                          />
+                        </div>
+                        <input
+                          type="range"
                           min={40}
                           max={160}
-                          unit="mm"
+                          step={5}
+                          value={params.plinthHeight || 80}
+                          onChange={(e) => updateParam("plinthHeight", Number(e.target.value))}
+                          className={styles.rangeSlider}
                         />
                       </div>
-                      <input
-                        type="range"
-                        min={40}
-                        max={160}
-                        step={5}
-                        value={params.plinthHeight || 80}
-                        onChange={(e) => updateParam("plinthHeight", Number(e.target.value))}
-                        className={styles.rangeSlider}
-                      />
-                    </div>
+
+                      <div className={styles.sliderCard}>
+                        <div className={styles.sliderHead}>
+                          <span className={styles.sliderName}>Plinth Recess / Offset</span>
+                          <CadNumberInput
+                            value={params.plinthRecess || 40}
+                            onChange={(val) => updateParam("plinthRecess", val)}
+                            min={10}
+                            max={80}
+                            unit="mm"
+                          />
+                        </div>
+                        <input
+                          type="range"
+                          min={10}
+                          max={80}
+                          step={5}
+                          value={params.plinthRecess || 40}
+                          onChange={(e) => updateParam("plinthRecess", Number(e.target.value))}
+                          className={styles.rangeSlider}
+                        />
+                      </div>
+                    </>
                   )}
 
                   {/* Solid Back Board Toggle for Cabinets */}
@@ -898,99 +1779,6 @@ export default function ModelerControls({
                       className={styles.rangeSlider}
                     />
                   </div>
-
-                  {/* Office Vertical Pedestal Tower Option */}
-                  <div className={styles.controlGroup} style={{ marginTop: "0.5rem" }}>
-                    <label className={styles.groupLabel}>Drawer Style</label>
-                    <div className={styles.segmentedGrid2}>
-                      <button
-                        type="button"
-                        onClick={() => updateParam("deskDrawerType", "apron")}
-                        className={`${styles.segmentedBtn} ${
-                          (params.deskDrawerType || "apron") === "apron" ? styles.segmentedBtnActive : ""
-                        }`}
-                      >
-                        Apron (Under Top)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => updateParam("deskDrawerType", "pedestal")}
-                        className={`${styles.segmentedBtn} ${
-                          params.deskDrawerType === "pedestal" ? styles.segmentedBtnActive : ""
-                        }`}
-                      >
-                        Office Pedestal Tower
-                      </button>
-                    </div>
-                  </div>
-
-                  {params.deskDrawerType === "pedestal" && (
-                    <>
-                      <div className={styles.controlGroup}>
-                        <label className={styles.groupLabel}>Pedestal Placement Side</label>
-                        <div className={styles.segmentedGrid2}>
-                          <button
-                            type="button"
-                            onClick={() => updateParam("pedestalSide", "left")}
-                            className={`${styles.segmentedBtn} ${
-                              params.pedestalSide === "left" ? styles.segmentedBtnActive : ""
-                            }`}
-                          >
-                            Left Side
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => updateParam("pedestalSide", "right")}
-                            className={`${styles.segmentedBtn} ${
-                              (params.pedestalSide || "right") === "right" ? styles.segmentedBtnActive : ""
-                            }`}
-                          >
-                            Right Side
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className={styles.sliderCard}>
-                        <div className={styles.sliderHead}>
-                          <span className={styles.sliderName}>Pedestal Width</span>
-                          <CadNumberInput
-                            value={params.pedestalWidth || 400}
-                            onChange={(val) => updateParam("pedestalWidth", val)}
-                            min={300}
-                            max={600}
-                            unit="mm"
-                          />
-                        </div>
-                        <input
-                          type="range"
-                          min={300}
-                          max={600}
-                          step={10}
-                          value={params.pedestalWidth || 400}
-                          onChange={(e) => updateParam("pedestalWidth", Number(e.target.value))}
-                          className={styles.rangeSlider}
-                        />
-                      </div>
-
-                      <div className={styles.controlGroup}>
-                        <label className={styles.groupLabel}>Pedestal Drawer Count</label>
-                        <div className={styles.segmentedGrid3}>
-                          {[2, 3, 4].map((n) => (
-                            <button
-                              key={n}
-                              type="button"
-                              onClick={() => updateParam("pedestalDrawerCount", n)}
-                              className={`${styles.segmentedBtn} ${
-                                (params.pedestalDrawerCount || 3) === n ? styles.segmentedBtnActive : ""
-                              }`}
-                            >
-                              {n} Drawers
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </>
-                  )}
                 </>
               )}
 
@@ -1236,6 +2024,7 @@ export default function ModelerControls({
                           { id: "double", label: "Double" },
                           { id: "singleLeft", label: "Single Left" },
                           { id: "singleRight", label: "Single Right" },
+                          { id: "cornerDouble", label: "90° Corner Pair" },
                           { id: "flipUp", label: "Flip-Up Lid" },
                         ].map((d) => (
                           <button
@@ -1258,7 +2047,7 @@ export default function ModelerControls({
                         <div className={styles.actionSliderHead}>
                           <span>3D Door Open Angle</span>
                           <span className={styles.interactiveVal}>
-                            {Math.round(((params.doorOpenPercent || 0) * 90) / 100)}°
+                            {Math.round((((selectedUnit.doorOpenPercent !== undefined ? selectedUnit.doorOpenPercent : params.doorOpenPercent) || 0) * 90) / 100)}°
                           </span>
                         </div>
                         <input
@@ -1266,8 +2055,12 @@ export default function ModelerControls({
                           min={0}
                           max={100}
                           step={1}
-                          value={params.doorOpenPercent || 0}
-                          onChange={(e) => updateParam("doorOpenPercent", Number(e.target.value))}
+                          value={(selectedUnit.doorOpenPercent !== undefined ? selectedUnit.doorOpenPercent : params.doorOpenPercent) || 0}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            updateSelectedUnit({ doorOpenPercent: val });
+                            updateParam("doorOpenPercent", val);
+                          }}
                           className={styles.rangeSlider}
                         />
                       </div>
@@ -1354,7 +2147,7 @@ export default function ModelerControls({
                   </>
                 )}
 
-                {/* Table / Desk Apron Drawers */}
+                {/* Table / Desk Drawers */}
                 {(params.category === "Table" || params.category === "Desk") && (
                   <>
                     <div
@@ -1375,24 +2168,119 @@ export default function ModelerControls({
                       </div>
                     </div>
 
-                    {params.hasDrawers && params.deskDrawerType !== "pedestal" && (
-                      <div className={styles.controlGroup}>
-                        <label className={styles.groupLabel}>Drawer Count</label>
-                        <div className={styles.segmentedGrid3}>
-                          {[1, 2, 3].map((n) => (
+                    {params.hasDrawers && (
+                      <>
+                        {/* Drawer Style: Apron vs Pedestal */}
+                        <div className={styles.controlGroup} style={{ marginTop: "0.5rem" }}>
+                          <label className={styles.groupLabel}>Drawer Style</label>
+                          <div className={styles.segmentedGrid2}>
                             <button
-                              key={n}
                               type="button"
-                              onClick={() => updateParam("drawerCount", n)}
+                              onClick={() => updateParam("deskDrawerType", "apron")}
                               className={`${styles.segmentedBtn} ${
-                                (params.drawerCount || 1) === n ? styles.segmentedBtnActive : ""
+                                (params.deskDrawerType || "apron") === "apron" ? styles.segmentedBtnActive : ""
                               }`}
                             >
-                              {n} Drawer{n > 1 ? "s" : ""}
+                              Apron (Under Top)
                             </button>
-                          ))}
+                            <button
+                              type="button"
+                              onClick={() => updateParam("deskDrawerType", "pedestal")}
+                              className={`${styles.segmentedBtn} ${
+                                params.deskDrawerType === "pedestal" ? styles.segmentedBtnActive : ""
+                              }`}
+                            >
+                              Office Pedestal Tower
+                            </button>
+                          </div>
                         </div>
-                      </div>
+
+                        {params.deskDrawerType !== "pedestal" ? (
+                          <div className={styles.controlGroup}>
+                            <label className={styles.groupLabel}>Drawer Count</label>
+                            <div className={styles.segmentedGrid3}>
+                              {[1, 2, 3].map((n) => (
+                                <button
+                                  key={n}
+                                  type="button"
+                                  onClick={() => updateParam("drawerCount", n)}
+                                  className={`${styles.segmentedBtn} ${
+                                    (params.drawerCount || 1) === n ? styles.segmentedBtnActive : ""
+                                  }`}
+                                >
+                                  {n} Drawer{n > 1 ? "s" : ""}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className={styles.controlGroup}>
+                              <label className={styles.groupLabel}>Pedestal Placement Side</label>
+                              <div className={styles.segmentedGrid2}>
+                                <button
+                                  type="button"
+                                  onClick={() => updateParam("pedestalSide", "left")}
+                                  className={`${styles.segmentedBtn} ${
+                                    params.pedestalSide === "left" ? styles.segmentedBtnActive : ""
+                                  }`}
+                                >
+                                  Left Side
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => updateParam("pedestalSide", "right")}
+                                  className={`${styles.segmentedBtn} ${
+                                    (params.pedestalSide || "right") === "right" ? styles.segmentedBtnActive : ""
+                                  }`}
+                                >
+                                  Right Side
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className={styles.sliderCard}>
+                              <div className={styles.sliderHead}>
+                                <span className={styles.sliderName}>Pedestal Width</span>
+                                <CadNumberInput
+                                  value={params.pedestalWidth || 400}
+                                  onChange={(val) => updateParam("pedestalWidth", val)}
+                                  min={300}
+                                  max={600}
+                                  unit="mm"
+                                />
+                              </div>
+                              <input
+                                type="range"
+                                min={300}
+                                max={600}
+                                step={10}
+                                value={params.pedestalWidth || 400}
+                                onChange={(e) => updateParam("pedestalWidth", Number(e.target.value))}
+                                className={styles.rangeSlider}
+                              />
+                            </div>
+
+                            <div className={styles.controlGroup}>
+                              <label className={styles.groupLabel}>Pedestal Drawer Count</label>
+                              <div className={styles.segmentedGrid3}>
+                                {[2, 3, 4].map((n) => (
+                                  <button
+                                    key={n}
+                                    type="button"
+                                    onClick={() => updateParam("pedestalDrawerCount", n)}
+                                    className={`${styles.segmentedBtn} ${
+                                      (params.pedestalDrawerCount || 3) === n ? styles.segmentedBtnActive : ""
+                                    }`}
+                                  >
+                                    {n} Drawers
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </>
                     )}
                   </>
                 )}
@@ -1421,12 +2309,13 @@ export default function ModelerControls({
           </div>
         )}
 
-        {/* SECTION 4: INNER DIVISIONS & SHELVING */}
-        <div
-          className={`${styles.accordionSection} ${
-            openSections.divisions ? styles.accordionSectionOpen : ""
-          }`}
-        >
+        {/* SECTION 4: INNER DIVISIONS & SHELVING (Hidden for Table & Desk) */}
+        {params.category !== "Table" && params.category !== "Desk" && (
+          <div
+            className={`${styles.accordionSection} ${
+              openSections.divisions ? styles.accordionSectionOpen : ""
+            }`}
+          >
           <button
             type="button"
             className={styles.accordionHeader}
@@ -1475,7 +2364,7 @@ export default function ModelerControls({
                           type="button"
                           onClick={() => updateSelectedWardrobeUnit({ internalShelves: s })}
                           className={`${styles.segmentedBtn} ${
-                            (selectedWardrobeUnit.internalShelves ?? 2) === s
+                            (selectedWardrobeUnit.internalShelves ?? 0) === s
                               ? styles.segmentedBtnActive
                               : ""
                           }`}
@@ -1542,7 +2431,7 @@ export default function ModelerControls({
                           type="button"
                           onClick={() => updateParam("internalShelves", s)}
                           className={`${styles.segmentedBtn} ${
-                            (params.internalShelves || 3) === s ? styles.segmentedBtnActive : ""
+                            (params.internalShelves ?? 3) === s ? styles.segmentedBtnActive : ""
                           }`}
                         >
                           {s} {s === 1 ? "Shelf" : "Shelves"}
@@ -1572,6 +2461,130 @@ export default function ModelerControls({
                       ))}
                     </div>
                   </div>
+
+                  {/* Selected Division Manipulation & Offset Slider for Shelf */}
+                  {params.selectedDivision && (
+                    <div className={styles.selectedDivisionCard}>
+                      <div className={styles.selectedDivisionHead} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontWeight: 700, color: "#fbbf24", fontSize: "0.78rem" }}>
+                          {params.selectedDivision.type === "partition"
+                            ? `Selected Vertical Divider #${(params.selectedDivision.index ?? 0) + 1}`
+                            : `Selected Shelf Tier #${(params.selectedDivision.index ?? 0) + 1}`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (params.onSelectDivision) params.onSelectDivision(null);
+                          }}
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            color: "#94a3b8",
+                            cursor: "pointer",
+                            fontSize: "11px",
+                          }}
+                        >
+                          ✕ Deselect
+                        </button>
+                      </div>
+
+                      <div className={styles.sliderCard} style={{ marginTop: "0.5rem", background: "rgba(245, 158, 11, 0.08)" }}>
+                        <div className={styles.sliderHead}>
+                          <span className={styles.sliderName}>
+                            {params.selectedDivision.type === "partition" ? "Horizontal Offset" : "Vertical Offset"}
+                          </span>
+                          <CadNumberInput
+                            value={
+                              params.selectedDivision.type === "partition"
+                                ? params.shelfColumnOffsets?.[params.selectedDivision.index ?? 0] ?? 0
+                                : params.shelfRowOffsets?.[params.selectedDivision.index ?? 0] ?? 0
+                            }
+                            onChange={(val) => {
+                              const idx = params.selectedDivision?.index ?? 0;
+                              if (params.selectedDivision?.type === "partition") {
+                                const next = [...(params.shelfColumnOffsets || [])];
+                                next[idx] = val;
+                                updateParam("shelfColumnOffsets", next);
+                              } else {
+                                const next = [...(params.shelfRowOffsets || [])];
+                                next[idx] = val;
+                                updateParam("shelfRowOffsets", next);
+                              }
+                            }}
+                            min={-200}
+                            max={200}
+                            unit="mm"
+                          />
+                        </div>
+                        <input
+                          type="range"
+                          min={-200}
+                          max={200}
+                          step={5}
+                          value={
+                            params.selectedDivision.type === "partition"
+                              ? params.shelfColumnOffsets?.[params.selectedDivision.index ?? 0] ?? 0
+                              : params.shelfRowOffsets?.[params.selectedDivision.index ?? 0] ?? 0
+                          }
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            const idx = params.selectedDivision?.index ?? 0;
+                            if (params.selectedDivision?.type === "partition") {
+                              const next = [...(params.shelfColumnOffsets || [])];
+                              next[idx] = val;
+                              updateParam("shelfColumnOffsets", next);
+                            } else {
+                              const next = [...(params.shelfRowOffsets || [])];
+                              next[idx] = val;
+                              updateParam("shelfRowOffsets", next);
+                            }
+                          }}
+                          className={styles.rangeSlider}
+                        />
+                      </div>
+
+                      <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const idx = params.selectedDivision?.index ?? 0;
+                            if (params.selectedDivision?.type === "partition") {
+                              const next = [...(params.shelfColumnOffsets || [])];
+                              next[idx] = 0;
+                              updateParam("shelfColumnOffsets", next);
+                            } else {
+                              const next = [...(params.shelfRowOffsets || [])];
+                              next[idx] = 0;
+                              updateParam("shelfRowOffsets", next);
+                            }
+                          }}
+                          className={styles.segmentedBtn}
+                          style={{ flex: 1 }}
+                        >
+                          Center (0mm)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (params.onRemoveDivision && params.selectedDivision) {
+                              params.onRemoveDivision(params.selectedDivision);
+                            } else if (params.selectedDivision) {
+                              if (params.selectedDivision.type === "partition") {
+                                updateParam("internalColumns", Math.max(1, (params.internalColumns || 2) - 1));
+                              } else {
+                                updateParam("internalShelves", Math.max(0, (params.internalShelves ?? 3) - 1));
+                              }
+                              if (params.onSelectDivision) params.onSelectDivision(null);
+                            }
+                          }}
+                          className={styles.segmentedBtn}
+                          style={{ flex: 1, color: "#f87171" }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
 
@@ -1585,7 +2598,7 @@ export default function ModelerControls({
                         type="button"
                         onClick={() => updateSelectedUnit({ internalShelves: s })}
                         className={`${styles.segmentedBtn} ${
-                          (selectedUnit.internalShelves || 0) === s ? styles.segmentedBtnActive : ""
+                          (selectedUnit.internalShelves ?? 0) === s ? styles.segmentedBtnActive : ""
                         }`}
                       >
                         {s} {s === 1 ? "Shelf" : "Shelves"}
@@ -1597,6 +2610,7 @@ export default function ModelerControls({
             </div>
           )}
         </div>
+      )}
 
         {/* SECTION 5: HARDWARE & HANDLES (Hidden for Shelf!) */}
         {params.category !== "Shelf" && (
@@ -1625,6 +2639,7 @@ export default function ModelerControls({
                     {[
                       { id: "bar", label: "Bar Pull" },
                       { id: "knob", label: "Knob" },
+                      { id: "cncJProfile", label: "CNC J-Profile" },
                       { id: "edgePull", label: "Edge Lip" },
                       { id: "cutout", label: "Cutout Slot" },
                       { id: "hidden", label: "Hidden / Push" },
@@ -1635,6 +2650,8 @@ export default function ModelerControls({
                         onClick={() => {
                           if (params.category === "Cabinet" && selectedUnit) {
                             updateSelectedUnit({ handleType: h.id as KitchenCabinetUnit["handleType"] });
+                          } else if (params.category === "Wardrobe" && selectedWardrobeUnit) {
+                            updateSelectedWardrobeUnit({ handleType: h.id as WardrobeUnit["handleType"] });
                           } else {
                             updateParam("handleType", h.id as FurnitureParams["handleType"]);
                           }
@@ -1642,6 +2659,8 @@ export default function ModelerControls({
                         className={`${styles.segmentedBtn} ${
                           (params.category === "Cabinet" && selectedUnit
                             ? selectedUnit.handleType
+                            : params.category === "Wardrobe" && selectedWardrobeUnit
+                            ? selectedWardrobeUnit.handleType
                             : params.handleType || "bar") === h.id
                             ? styles.segmentedBtnActive
                             : ""
@@ -1709,20 +2728,39 @@ export default function ModelerControls({
 
           {openSections.materials && (
             <div className={styles.accordionBody}>
+              {params.category === "Cabinet" && (
+                <div style={{ fontSize: "0.72rem", color: "#38bdf8", marginBottom: "0.5rem", fontWeight: 600 }}>
+                  {isMultiSelected
+                    ? `Applying material to ${selectedUnitIds.length} selected cabinets`
+                    : `Applying material to: ${selectedUnit?.name || "Selected Cabinet"}`}
+                </div>
+              )}
               <div className={styles.materialGrid}>
-                {MATERIALS.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => updateParam("materialType", m.id)}
-                    className={`${styles.materialOption} ${
-                      params.materialType === m.id ? styles.materialOptionActive : ""
-                    }`}
-                  >
-                    <span className={styles.colorSwatch} style={{ backgroundColor: m.color }} />
-                    <span>{m.name}</span>
-                  </button>
-                ))}
+                {MATERIALS.map((m) => {
+                  const isCurrentActive =
+                    params.category === "Cabinet" && selectedUnit
+                      ? (selectedUnit.materialType || params.materialType) === m.id
+                      : params.materialType === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => {
+                        if (params.category === "Cabinet" && selectedUnit) {
+                          updateSelectedUnit({ materialType: m.id });
+                        } else {
+                          updateParam("materialType", m.id);
+                        }
+                      }}
+                      className={`${styles.materialOption} ${
+                        isCurrentActive ? styles.materialOptionActive : ""
+                      }`}
+                    >
+                      <span className={styles.colorSwatch} style={{ backgroundColor: m.color }} />
+                      <span>{m.name}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1825,6 +2863,527 @@ export default function ModelerControls({
             </div>
           </div>
         </div>
+        </>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem", padding: "0.2rem 0" }}>
+            {/* Card 1: Title Block & Drawing Legend (Bottom Legend Editor) */}
+            <div className={styles.drawingPanelSection}>
+              <h3 className={styles.drawingPanelTitle}>
+                <MdEditNote size={16} />
+                Title Block & Legend Editor
+              </h3>
+
+              <div className={styles.drawingInputRow}>
+                <label className={styles.drawingInputLabel}>Drawing / Sheet Title</label>
+                <input
+                  type="text"
+                  className={styles.drawingTextInput}
+                  value={params.drawingSettings?.drawingTitle ?? params.name ?? "Technical Drawing"}
+                  onChange={(e) => updateDrawingParam("drawingTitle", e.target.value)}
+                  placeholder="e.g. Kitchen Cabinet Suite - Elevations & Sections"
+                />
+              </div>
+
+              <div className={styles.drawingInputRow}>
+                <label className={styles.drawingInputLabel}>Client / Studio Name</label>
+                <input
+                  type="text"
+                  className={styles.drawingTextInput}
+                  value={params.drawingSettings?.clientName ?? "Cadance Studio"}
+                  onChange={(e) => updateDrawingParam("clientName", e.target.value)}
+                  placeholder="e.g. Cadance Studio"
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+                <div className={styles.drawingInputRow}>
+                  <label className={styles.drawingInputLabel}>Drawing Code / No</label>
+                  <input
+                    type="text"
+                    className={styles.drawingTextInput}
+                    value={params.drawingSettings?.drawingNumber ?? "DWG-101"}
+                    onChange={(e) => updateDrawingParam("drawingNumber", e.target.value)}
+                    placeholder="e.g. DWG-101"
+                  />
+                </div>
+                <div className={styles.drawingInputRow}>
+                  <label className={styles.drawingInputLabel}>Revision</label>
+                  <input
+                    type="text"
+                    className={styles.drawingTextInput}
+                    value={params.drawingSettings?.revision ?? "Rev 01"}
+                    onChange={(e) => updateDrawingParam("revision", e.target.value)}
+                    placeholder="e.g. Rev 01"
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+                <div className={styles.drawingInputRow}>
+                  <label className={styles.drawingInputLabel}>Draughtsperson</label>
+                  <input
+                    type="text"
+                    className={styles.drawingTextInput}
+                    value={params.drawingSettings?.designer ?? "Studio Engineer"}
+                    onChange={(e) => updateDrawingParam("designer", e.target.value)}
+                    placeholder="e.g. Lead Joinery Designer"
+                  />
+                </div>
+                <div className={styles.drawingInputRow}>
+                  <label className={styles.drawingInputLabel}>Drawing Status</label>
+                  <select
+                    className={styles.drawingSelect}
+                    value={params.drawingSettings?.status ?? "FOR FABRICATION"}
+                    onChange={(e) => updateDrawingParam("status", e.target.value)}
+                  >
+                    <option value="FOR FABRICATION">FOR FABRICATION</option>
+                    <option value="PRELIMINARY / CONCEPT">PRELIMINARY / CONCEPT</option>
+                    <option value="FOR CLIENT APPROVAL">FOR CLIENT APPROVAL</option>
+                    <option value="TENDER / BID">TENDER / BID</option>
+                    <option value="AS-BUILT">AS-BUILT</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className={styles.drawingInputRow}>
+                <label className={styles.drawingInputLabel}>
+                  Fabrication Notes & Material Legend
+                </label>
+                <textarea
+                  className={styles.drawingTextArea}
+                  value={
+                    params.drawingSettings?.notes ??
+                    "18mm MFC Carcass with 2mm ABS edge banding. All dimensions in mm. Verify all site measurements prior to joinery fabrication."
+                  }
+                  onChange={(e) => updateDrawingParam("notes", e.target.value)}
+                  placeholder="Enter custom joinery notes, hardware specs, or legend remarks..."
+                />
+              </div>
+            </div>
+
+            {/* Card 2: 3D Isometric View Angle & Orientation Controls */}
+            <div className={styles.drawingPanelSection}>
+              <h3 className={styles.drawingPanelTitle}>
+                <Md3dRotation size={16} />
+                Isometric Projection Angle
+              </h3>
+              <span style={{ fontSize: "0.71rem", color: "#94a3b8" }}>
+                Rotate the 3D isometric view if your furniture model is facing away.
+              </span>
+
+              {/* Quick Quadrant Presets */}
+              <div className={styles.isoAnglePresetRow}>
+                {[
+                  { label: "Front-R", angle: 45 },
+                  { label: "Front-L", angle: 135 },
+                  { label: "Back-L", angle: 225 },
+                  { label: "Back-R", angle: 315 },
+                ].map((p) => (
+                  <button
+                    key={p.angle}
+                    type="button"
+                    onClick={() => updateDrawingParam("isoAngle", p.angle)}
+                    className={`${styles.isoAnglePresetBtn} ${
+                      (params.drawingSettings?.isoAngle ?? 45) === p.angle
+                        ? styles.isoAnglePresetBtnActive
+                        : ""
+                    }`}
+                    title={`${p.label} View (${p.angle}°)`}
+                  >
+                    <span>{p.label}</span>
+                    <span style={{ fontSize: "9px", opacity: 0.8 }}>{p.angle}°</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Quick 180° Flip Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  const cur = params.drawingSettings?.isoAngle ?? 45;
+                  updateDrawingParam("isoAngle", (cur + 180) % 360);
+                }}
+                className={styles.flipAngleBtn}
+                title="Flip Isometric View by 180°"
+              >
+                <MdScreenRotation size={15} />
+                <span>🔄 Flip Facing Direction (+180°)</span>
+              </button>
+
+              {/* Continuous Rotation Slider */}
+              <div className={styles.isoSliderContainer}>
+                <div className={styles.drawingInputLabel}>
+                  <span>Azimuth Angle (Rotation)</span>
+                  <span className={styles.isoDegreeBadge}>
+                    {params.drawingSettings?.isoAngle ?? 45}°
+                  </span>
+                </div>
+                <div className={styles.isoSliderRow}>
+                  <input
+                    type="range"
+                    min={0}
+                    max={360}
+                    step={5}
+                    value={params.drawingSettings?.isoAngle ?? 45}
+                    onChange={(e) => updateDrawingParam("isoAngle", Number(e.target.value))}
+                    className={styles.isoRangeInput}
+                  />
+                </div>
+              </div>
+
+              {/* Elevation Angle Slider */}
+              <div className={styles.isoSliderContainer}>
+                <div className={styles.drawingInputLabel}>
+                  <span>Camera Elevation Angle</span>
+                  <span className={styles.isoDegreeBadge}>
+                    {params.drawingSettings?.isoElevation ?? 30}°
+                  </span>
+                </div>
+                <div className={styles.isoSliderRow}>
+                  <input
+                    type="range"
+                    min={15}
+                    max={45}
+                    step={5}
+                    value={params.drawingSettings?.isoElevation ?? 30}
+                    onChange={(e) => updateDrawingParam("isoElevation", Number(e.target.value))}
+                    className={styles.isoRangeInput}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Card 3: Sheet Layout & Drawing Scale */}
+            <div className={styles.drawingPanelSection}>
+              <h3 className={styles.drawingPanelTitle}>
+                <MdGridGoldenratio size={16} />
+                Sheet Setup & Scale
+              </h3>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+                <div className={styles.drawingInputRow}>
+                  <label className={styles.drawingInputLabel}>Page Size</label>
+                  <div style={{ display: "flex", gap: "4px" }}>
+                    <button
+                      type="button"
+                      onClick={() => updateDrawingParam("pageSize", "A3")}
+                      className={`${styles.isoAnglePresetBtn} ${
+                        (params.drawingSettings?.pageSize ?? "A3") === "A3"
+                          ? styles.isoAnglePresetBtnActive
+                          : ""
+                      }`}
+                      style={{ flex: 1, padding: "0.4rem 0" }}
+                    >
+                      A3 (420x297)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateDrawingParam("pageSize", "A4")}
+                      className={`${styles.isoAnglePresetBtn} ${
+                        params.drawingSettings?.pageSize === "A4"
+                          ? styles.isoAnglePresetBtnActive
+                          : ""
+                      }`}
+                      style={{ flex: 1, padding: "0.4rem 0" }}
+                    >
+                      A4 (297x210)
+                    </button>
+                  </div>
+                </div>
+
+                <div className={styles.drawingInputRow}>
+                  <label className={styles.drawingInputLabel}>Orientation</label>
+                  <div style={{ display: "flex", gap: "4px" }}>
+                    <button
+                      type="button"
+                      onClick={() => updateDrawingParam("orientation", "landscape")}
+                      className={`${styles.isoAnglePresetBtn} ${
+                        (params.drawingSettings?.orientation ?? "landscape") === "landscape"
+                          ? styles.isoAnglePresetBtnActive
+                          : ""
+                      }`}
+                      style={{ flex: 1, padding: "0.4rem 0" }}
+                    >
+                      Landscape
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateDrawingParam("orientation", "portrait")}
+                      className={`${styles.isoAnglePresetBtn} ${
+                        params.drawingSettings?.orientation === "portrait"
+                          ? styles.isoAnglePresetBtnActive
+                          : ""
+                      }`}
+                      style={{ flex: 1, padding: "0.4rem 0" }}
+                    >
+                      Portrait
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className={styles.drawingInputRow}>
+                <label className={styles.drawingInputLabel}>Drawing Scale</label>
+                <select
+                  className={styles.drawingSelect}
+                  value={params.drawingSettings?.scaleMode ?? "auto"}
+                  onChange={(e) =>
+                    updateDrawingParam(
+                      "scaleMode",
+                      e.target.value as TechnicalDrawingSettings["scaleMode"]
+                    )
+                  }
+                >
+                  <option value="auto">Auto Fit to Sheet</option>
+                  <option value="1:10">1:10 (Detailed)</option>
+                  <option value="1:15">1:15</option>
+                  <option value="1:20">1:20 (Standard Architectural)</option>
+                  <option value="1:25">1:25</option>
+                  <option value="1:50">1:50 (Overview)</option>
+                  <option value="custom">Custom Scale Multiplier</option>
+                </select>
+              </div>
+
+              {params.drawingSettings?.scaleMode === "custom" && (
+                <div className={styles.isoSliderContainer}>
+                  <div className={styles.drawingInputLabel}>
+                    <span>Custom Scale Multiplier</span>
+                    <span className={styles.isoDegreeBadge}>
+                      {(params.drawingSettings?.customScale ?? 0.1).toFixed(2)}x
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.02}
+                    max={0.35}
+                    step={0.01}
+                    value={params.drawingSettings?.customScale ?? 0.1}
+                    onChange={(e) => updateDrawingParam("customScale", Number(e.target.value))}
+                    className={styles.isoRangeInput}
+                  />
+                </div>
+              )}
+
+              <div className={styles.drawingInputRow}>
+                <label className={styles.drawingInputLabel}>Dimension Units</label>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <button
+                    type="button"
+                    onClick={() => updateDrawingParam("unit", "mm")}
+                    className={`${styles.isoAnglePresetBtn} ${
+                      (params.drawingSettings?.unit ?? "mm") === "mm"
+                        ? styles.isoAnglePresetBtnActive
+                        : ""
+                    }`}
+                    style={{ flex: 1, padding: "0.45rem 0", fontWeight: 700 }}
+                  >
+                    Millimeters (mm)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateDrawingParam("unit", "cm")}
+                    className={`${styles.isoAnglePresetBtn} ${
+                      params.drawingSettings?.unit === "cm"
+                        ? styles.isoAnglePresetBtnActive
+                        : ""
+                    }`}
+                    style={{ flex: 1, padding: "0.45rem 0", fontWeight: 700 }}
+                  >
+                    Centimeters (cm)
+                  </button>
+                </div>
+              </div>
+
+              <div className={styles.drawingInputRow}>
+                <label className={styles.drawingInputLabel}>Dimensions Visibility</label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateDrawingParam(
+                      "showDimensions",
+                      params.drawingSettings?.showDimensions === false ? true : false
+                    )
+                  }
+                  className={`${styles.isoAnglePresetBtn} ${
+                    params.drawingSettings?.showDimensions !== false
+                      ? styles.isoAnglePresetBtnActive
+                      : ""
+                  }`}
+                  style={{ padding: "0.45rem", width: "100%" }}
+                >
+                  {params.drawingSettings?.showDimensions !== false
+                    ? "📐 Dimensions: Visible (ON)"
+                    : "📐 Dimensions: Hidden (OFF)"}
+                </button>
+              </div>
+            </div>
+
+            {/* Card: Custom View Titles / Drawing Names */}
+            <div className={styles.drawingPanelSection}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255, 255, 255, 0.06)", paddingBottom: "0.45rem" }}>
+                <h3 className={styles.drawingPanelTitle} style={{ borderBottom: "none", paddingBottom: 0 }}>
+                  <MdEditNote size={16} />
+                  Drawing Names & View Titles
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => updateDrawingParam("viewTitles", undefined)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#60a5fa",
+                    fontSize: "0.7rem",
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                  }}
+                  title="Reset to default standard titles"
+                >
+                  Reset Defaults
+                </button>
+              </div>
+              <span style={{ fontSize: "0.71rem", color: "#94a3b8" }}>
+                Customize the names that appear on the sheet above each viewport.
+              </span>
+
+              <div className={styles.drawingInputRow}>
+                <label className={styles.drawingInputLabel}>Plan (Top View) Title</label>
+                <input
+                  type="text"
+                  className={styles.drawingTextInput}
+                  value={params.drawingSettings?.viewTitles?.top ?? "Plan (Top View)"}
+                  onChange={(e) =>
+                    updateDrawingParam("viewTitles", {
+                      ...(params.drawingSettings?.viewTitles || {}),
+                      top: e.target.value,
+                    })
+                  }
+                  placeholder="e.g. Plan (Top View)"
+                />
+              </div>
+
+              <div className={styles.drawingInputRow}>
+                <label className={styles.drawingInputLabel}>Front Elevation Title</label>
+                <input
+                  type="text"
+                  className={styles.drawingTextInput}
+                  value={params.drawingSettings?.viewTitles?.front ?? "Front Elevation (Interior Joinery & Shelves)"}
+                  onChange={(e) =>
+                    updateDrawingParam("viewTitles", {
+                      ...(params.drawingSettings?.viewTitles || {}),
+                      front: e.target.value,
+                    })
+                  }
+                  placeholder="e.g. Front Elevation"
+                />
+              </div>
+
+              <div className={styles.drawingInputRow}>
+                <label className={styles.drawingInputLabel}>Side / Cross-Section Title</label>
+                <input
+                  type="text"
+                  className={styles.drawingTextInput}
+                  value={params.drawingSettings?.viewTitles?.side ?? "Side / Cross-Section"}
+                  onChange={(e) =>
+                    updateDrawingParam("viewTitles", {
+                      ...(params.drawingSettings?.viewTitles || {}),
+                      side: e.target.value,
+                    })
+                  }
+                  placeholder="e.g. Side / Cross-Section"
+                />
+              </div>
+
+              <div className={styles.drawingInputRow}>
+                <label className={styles.drawingInputLabel}>3D Isometric View Title</label>
+                <input
+                  type="text"
+                  className={styles.drawingTextInput}
+                  value={params.drawingSettings?.viewTitles?.iso ?? `3D Isometric Projection (${params.drawingSettings?.isoAngle ?? 45}°)`}
+                  onChange={(e) =>
+                    updateDrawingParam("viewTitles", {
+                      ...(params.drawingSettings?.viewTitles || {}),
+                      iso: e.target.value,
+                    })
+                  }
+                  placeholder="e.g. 3D Isometric Projection"
+                />
+              </div>
+            </div>
+
+            {/* Card 4: Quick Dimensions (W x H x D) - accessible directly in 2D tab */}
+            <div className={styles.drawingPanelSection}>
+              <h3 className={styles.drawingPanelTitle}>
+                <MdStraighten size={16} />
+                Quick Furniture Dimensions (mm)
+              </h3>
+              <span style={{ fontSize: "0.71rem", color: "#94a3b8" }}>
+                Changes to dimensions reflect live on the 2D technical drawings.
+              </span>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.4rem" }}>
+                <div>
+                  <label className={styles.drawingInputLabel}>Width (W)</label>
+                  <CadNumberInput
+                    value={params.width}
+                    onChange={(v) => updateParam("width", Math.max(200, v))}
+                    min={200}
+                    max={4000}
+                    step={10}
+                    unit="mm"
+                  />
+                </div>
+                <div>
+                  <label className={styles.drawingInputLabel}>Height (H)</label>
+                  <CadNumberInput
+                    value={params.height}
+                    onChange={(v) => updateParam("height", Math.max(200, v))}
+                    min={200}
+                    max={3000}
+                    step={10}
+                    unit="mm"
+                  />
+                </div>
+                <div>
+                  <label className={styles.drawingInputLabel}>Depth (D)</label>
+                  <CadNumberInput
+                    value={params.depth}
+                    onChange={(v) => updateParam("depth", Math.max(150, v))}
+                    min={150}
+                    max={2000}
+                    step={10}
+                    unit="mm"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Save to Project Button */}
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={saving}
+              className={`${styles.saveBtn} ${saveSuccess ? styles.saveBtnSuccess : ""}`}
+              style={{ marginTop: "0.5rem" }}
+            >
+              {saving ? (
+                <>
+                  <div className={styles.spinner} />
+                  <span>SAVING CHANGES...</span>
+                </>
+              ) : saveSuccess ? (
+                <>
+                  <MdCheck size={18} />
+                  <span>CHANGES SAVED!</span>
+                </>
+              ) : (
+                <>
+                  <MdSave size={18} />
+                  <span>SAVE DRAWING & PARAMS</span>
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
     </aside>
   );
