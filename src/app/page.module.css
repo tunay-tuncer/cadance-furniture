@@ -1,0 +1,120 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 4rem);
+  width: 100%;
+  background: var(--bgDark);
+  background-image: 
+    radial-gradient(circle at 50% 20%, rgba(41, 114, 245, 0.16) 0%, transparent 65%),
+    linear-gradient(to right, var(--gridWhite) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--gridWhite) 1px, transparent 1px);
+  background-size: 100% 100%, 40px 40px, 40px 40px;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6rem 1.5rem 3rem;
+}
+
+.statusCard {
+  max-width: 580px;
+  width: 100%;
+  padding: 2.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  background: var(--bgCard);
+  backdrop-filter: var(--blurCard);
+  -webkit-backdrop-filter: var(--blurCard);
+  border: 1px solid var(--borderCard);
+  border-radius: var(--radiusCard);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+}
+
+.heroBadge {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.65rem;
+  border-radius: 9999px;
+  background: rgba(41, 114, 245, 0.12);
+  color: #60a5fa;
+  border: 1px solid rgba(41, 114, 245, 0.25);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.cardTitle {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--textWhite);
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+
+.cardDescription {
+  font-size: 0.875rem;
+  color: var(--textGrey);
+  line-height: 1.6;
+}
+
+.specsList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 0.25rem;
+  padding: 1.2rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radiusSm);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 0.8125rem;
+  color: var(--textMain);
+}
+
+.specItem {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.specDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  flex-shrink: 0;
+}
+
+.actionRow {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+.primaryBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.4rem;
+  background: var(--accent);
+  color: #ffffff;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.primaryBtn:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 0 20px rgba(41, 114, 245, 0.45);
+}
