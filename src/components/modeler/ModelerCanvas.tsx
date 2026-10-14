@@ -22,7 +22,12 @@ interface ModelerCanvasProps {
   setIsParallel: (val: boolean) => void;
   onSelectUnit?: (id: string) => void;
   onAddAdjacentUnit?: (sourceId: string, direction: "left" | "right" | "top") => void;
+  onSelectWardrobeUnit?: (id: string) => void;
+  onAddAdjacentWardrobeUnit?: (sourceId: string, direction: "left" | "right" | "top") => void;
 }
+
+// Default orbit pivot point at furniture vertical midpoint (~450mm from floor)
+const DEFAULT_TARGET: [number, number, number] = [0, 0.45, 0];
 
 // Controller component to manage seamless Perspective <-> Orthographic synchronization
 function CameraSyncController({
@@ -31,19 +36,21 @@ function CameraSyncController({
   controlsRef,
   perspRef,
   orthoRef,
-  params,
 }: {
   isParallel: boolean;
   setIsParallel: (val: boolean) => void;
   controlsRef: React.RefObject<OrbitControlsImpl | null>;
   perspRef: React.RefObject<THREE.PerspectiveCamera | null>;
   orthoRef: React.RefObject<THREE.OrthographicCamera | null>;
-  params: FurnitureParams;
 }) {
   const { set, size, invalidate } = useThree();
+  const prevParallelRef = useRef(isParallel);
 
-  // Synchronize transforms smoothly when projection changes
+  // Synchronize transforms smoothly ONLY when projection mode actually changes
   useEffect(() => {
+    if (prevParallelRef.current === isParallel) return;
+    prevParallelRef.current = isParallel;
+
     const controls = controlsRef.current;
     const persp = perspRef.current;
     const ortho = orthoRef.current;
@@ -51,7 +58,7 @@ function CameraSyncController({
 
     if (isParallel) {
       // Switch active camera to Orthographic
-      const target = controls?.target || new THREE.Vector3(0, params.height / 2000, 0);
+      const target = controls?.target ? controls.target.clone() : new THREE.Vector3(0, 0.45, 0);
       const dist = Math.max(1.2, persp.position.distanceTo(target));
 
       ortho.position.copy(persp.position);
@@ -89,7 +96,24 @@ function CameraSyncController({
       }
     }
     invalidate();
-  }, [isParallel, size, set, invalidate, controlsRef, perspRef, orthoRef, params.height]);
+  }, [isParallel, size, set, invalidate, controlsRef, perspRef, orthoRef]);
+
+  // Keep camera aspect ratios updated on viewport resize without moving position
+  useEffect(() => {
+    const persp = perspRef.current;
+    const ortho = orthoRef.current;
+    const aspect = size.width / Math.max(1, size.height);
+    if (persp) {
+      persp.aspect = aspect;
+      persp.updateProjectionMatrix();
+    }
+    if (ortho) {
+      const visibleH = ortho.top - ortho.bottom;
+      ortho.left = (-visibleH * aspect) / 2;
+      ortho.right = (visibleH * aspect) / 2;
+      ortho.updateProjectionMatrix();
+    }
+  }, [size, perspRef, orthoRef]);
 
   // OrbitControls listener: when user starts rotating, automatically revert to Perspective
   useEffect(() => {
@@ -121,6 +145,8 @@ export default function ModelerCanvas({
   setIsParallel,
   onSelectUnit,
   onAddAdjacentUnit,
+  onSelectWardrobeUnit,
+  onAddAdjacentWardrobeUnit,
 }: ModelerCanvasProps) {
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const perspRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -186,6 +212,8 @@ export default function ModelerCanvas({
               groupRef={groupRef}
               onSelectUnit={onSelectUnit}
               onAddAdjacentUnit={onAddAdjacentUnit}
+              onSelectWardrobeUnit={onSelectWardrobeUnit}
+              onAddAdjacentWardrobeUnit={onAddAdjacentWardrobeUnit}
             />
           </group>
 
@@ -209,7 +237,7 @@ export default function ModelerCanvas({
           <OrbitControls
             ref={controlsRef}
             makeDefault
-            target={[0, params.height / 2000, 0]} // Focus on furniture vertical midpoint
+            target={DEFAULT_TARGET}
             minDistance={0.4}
             maxDistance={8}
             maxPolarAngle={Math.PI / 2 + 0.05} // Prevent camera going under floor
@@ -223,7 +251,6 @@ export default function ModelerCanvas({
             controlsRef={controlsRef}
             perspRef={perspRef}
             orthoRef={orthoRef}
-            params={params}
           />
 
           {/* 

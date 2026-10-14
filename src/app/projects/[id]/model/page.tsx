@@ -9,7 +9,7 @@ import { useAuth } from "@/context/AuthContext";
 import { subscribeToUserProject, ProjectItem } from "@/lib/firebase/projectService";
 import { addFurnitureToProject } from "@/lib/firebase/furnitureService";
 import { exportFurnitureModel, ExportFormat } from "@/lib/exporters/exportModel";
-import { FurnitureParams, KitchenCabinetUnit } from "@/components/modeler/FurnitureMesh";
+import { FurnitureParams, KitchenCabinetUnit, WardrobeUnit } from "@/components/modeler/FurnitureMesh";
 import ModelerControls from "@/components/modeler/ModelerControls";
 import ModelerToolbar from "@/components/modeler/ModelerToolbar";
 import { FaChevronLeft } from "react-icons/fa";
@@ -51,6 +51,82 @@ const ModelerCanvas = dynamic(
   }
 );
 
+
+
+const DEFAULT_WARDROBE_UNITS: WardrobeUnit[] = [
+  {
+    id: "wardrobe-1",
+    name: "Main Section 1 (Hanging & Drawers)",
+    type: "main",
+    width: 900,
+    height: 2100,
+    depth: 600,
+    doorType: "sliding",
+    doorOpenPercent: 0,
+    hasMirror: false,
+    mirrorType: "full",
+    hasDrawers: true,
+    drawerType: "externalBottom",
+    drawerCount: 2,
+    drawerOpenPercent: 0,
+    hasClothesHangerRail: true,
+    internalShelves: 1,
+    hasInternalDivider: false,
+    handleType: "edgePull",
+    handleFinish: "black",
+  },
+  {
+    id: "wardrobe-2",
+    name: "Main Section 2 (Shelves & Mirror)",
+    type: "main",
+    width: 900,
+    height: 2100,
+    depth: 600,
+    doorType: "sliding",
+    doorOpenPercent: 0,
+    hasMirror: true,
+    mirrorType: "full",
+    hasDrawers: false,
+    drawerType: "internal",
+    drawerCount: 0,
+    drawerOpenPercent: 0,
+    hasClothesHangerRail: false,
+    internalShelves: 4,
+    hasInternalDivider: false,
+    handleType: "edgePull",
+    handleFinish: "black",
+  },
+  {
+    id: "wardrobe-top-1",
+    name: "Top Bridge 1",
+    type: "top",
+    width: 900,
+    height: 450,
+    depth: 600,
+    doorType: "hingedDouble",
+    doorOpenPercent: 0,
+    hasMirror: false,
+    internalShelves: 1,
+    drawerCount: 0,
+    handleType: "edgePull",
+    handleFinish: "black",
+  },
+  {
+    id: "wardrobe-top-2",
+    name: "Top Bridge 2",
+    type: "top",
+    width: 900,
+    height: 450,
+    depth: 600,
+    doorType: "hingedDouble",
+    doorOpenPercent: 0,
+    hasMirror: false,
+    internalShelves: 1,
+    drawerCount: 0,
+    handleType: "edgePull",
+    handleFinish: "black",
+  },
+];
 
 const DEFAULT_KITCHEN_UNITS: KitchenCabinetUnit[] = [
   {
@@ -148,6 +224,8 @@ export default function ModelerPage({ params }: PageProps) {
     hasBackPanel: true,
     kitchenUnits: DEFAULT_KITCHEN_UNITS,
     selectedUnitId: "base-1",
+    wardrobeUnits: DEFAULT_WARDROBE_UNITS,
+    selectedWardrobeUnitId: "wardrobe-1",
   });
 
   const [showGrid, setShowGrid] = useState<boolean>(true);
@@ -169,6 +247,82 @@ export default function ModelerPage({ params }: PageProps) {
       ...prev,
       selectedUnitId: id,
     }));
+  };
+
+  const handleSelectWardrobeUnit = (id: string) => {
+    setFurnitureParams((prev) => ({
+      ...prev,
+      selectedWardrobeUnitId: id,
+    }));
+  };
+
+  const handleAddAdjacentWardrobeUnit = (
+    sourceId: string,
+    direction: "left" | "right" | "top"
+  ) => {
+    setFurnitureParams((prev) => {
+      const list = prev.wardrobeUnits || DEFAULT_WARDROBE_UNITS;
+      const source = list.find((u) => u.id === sourceId);
+      if (!source) return prev;
+
+      if (direction === "top") {
+        const newTop: WardrobeUnit = {
+          id: `wardrobe-top-${Date.now()}`,
+          name: `Top Bridge (${source.width}mm)`,
+          type: "top",
+          width: source.width,
+          height: 450,
+          depth: source.depth,
+          doorType: "hingedDouble",
+          doorOpenPercent: 0,
+          hasMirror: false,
+          internalShelves: 1,
+          drawerCount: 0,
+          handleType: source.handleType,
+          handleFinish: source.handleFinish,
+        };
+        return {
+          ...prev,
+          wardrobeUnits: [...list, newTop],
+          selectedWardrobeUnitId: newTop.id,
+        };
+      } else {
+        const mainCount = list.filter((u) => u.type === "main").length;
+        const newMain: WardrobeUnit = {
+          id: `wardrobe-${Date.now()}`,
+          name: `Division ${mainCount + 1}`,
+          type: "main",
+          width: 800,
+          height: source.height,
+          depth: source.depth,
+          doorType: source.doorType,
+          doorOpenPercent: 0,
+          hasMirror: false,
+          mirrorType: "full",
+          hasDrawers: true,
+          drawerType: "externalBottom",
+          drawerCount: 2,
+          drawerOpenPercent: 0,
+          hasClothesHangerRail: true,
+          internalShelves: 2,
+          hasInternalDivider: false,
+          handleType: source.handleType,
+          handleFinish: source.handleFinish,
+        };
+        const idx = list.findIndex((u) => u.id === sourceId);
+        const updated = [...list];
+        if (direction === "left") {
+          updated.splice(idx, 0, newMain);
+        } else {
+          updated.splice(idx + 1, 0, newMain);
+        }
+        return {
+          ...prev,
+          wardrobeUnits: updated,
+          selectedWardrobeUnitId: newMain.id,
+        };
+      }
+    });
   };
 
   const handleAddAdjacentUnit = (
@@ -348,6 +502,8 @@ export default function ModelerPage({ params }: PageProps) {
           setIsParallel={setIsParallel}
           onSelectUnit={handleSelectUnit}
           onAddAdjacentUnit={handleAddAdjacentUnit}
+          onSelectWardrobeUnit={handleSelectWardrobeUnit}
+          onAddAdjacentWardrobeUnit={handleAddAdjacentWardrobeUnit}
         />
       </div>
 

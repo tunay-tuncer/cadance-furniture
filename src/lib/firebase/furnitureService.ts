@@ -11,7 +11,7 @@ import {
 } from "firebase/firestore";
 import { db } from "./client";
 
-export type FurnitureCategory = "Table" | "Shelf" | "Cabinet" | "Chair" | "Desk" | "Custom";
+export type FurnitureCategory = "Table" | "Shelf" | "Cabinet" | "Wardrobe" | "Chair" | "Desk" | "Custom";
 
 export interface FurnitureItem {
   id: string;

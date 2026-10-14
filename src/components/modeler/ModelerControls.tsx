@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { FurnitureParams, KitchenCabinetUnit } from "./FurnitureMesh";
+import { FurnitureParams, KitchenCabinetUnit, WardrobeUnit } from "./FurnitureMesh";
 import CadNumberInput from "./CadNumberInput";
 import {
   MdSave,
@@ -35,7 +35,7 @@ const CATEGORIES: FurnitureParams["category"][] = [
   "Table",
   "Shelf",
   "Cabinet",
-  "Desk",
+  "Wardrobe",
 ];
 
 const MATERIALS: { id: FurnitureParams["materialType"]; name: string; color: string }[] = [
@@ -57,6 +57,7 @@ export default function ModelerControls({
   // Collapsible Accordion Sections State
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     kitchenUnits: true,
+    wardrobeUnits: true,
     dimensions: true,
     geometry: true,
     openings: true,
@@ -138,6 +139,76 @@ export default function ModelerControls({
     }));
   };
 
+  // Wardrobe Modular Unit Management
+  const wardrobeUnits = params.wardrobeUnits || [];
+  const selectedWardrobeUnit = wardrobeUnits.find((u) => u.id === params.selectedWardrobeUnitId) || wardrobeUnits[0];
+
+  const updateSelectedWardrobeUnit = (updates: Partial<WardrobeUnit>) => {
+    if (!selectedWardrobeUnit) return;
+    const newUnits = wardrobeUnits.map((u) =>
+      u.id === selectedWardrobeUnit.id ? { ...u, ...updates } : u
+    );
+    setParams((prev) => ({
+      ...prev,
+      wardrobeUnits: newUnits,
+    }));
+  };
+
+  const addWardrobeUnit = (type: "main" | "top") => {
+    const existingCount = wardrobeUnits.filter((u) => u.type === type).length;
+    const newUnit: WardrobeUnit = {
+      id: `${type}-${Date.now()}`,
+      name: `${type === "main" ? "Division" : "Top Bridge"} ${existingCount + 1}`,
+      type,
+      width: 800,
+      height: type === "main" ? 2100 : 450,
+      depth: 600,
+      doorType: type === "main" ? "sliding" : "hingedDouble",
+      doorOpenPercent: 0,
+      hasMirror: false,
+      mirrorType: "full",
+      hasDrawers: type === "main",
+      drawerType: "externalBottom",
+      drawerCount: type === "main" ? 2 : 0,
+      drawerOpenPercent: 0,
+      hasClothesHangerRail: type === "main",
+      internalShelves: type === "main" ? 2 : 1,
+      hasInternalDivider: false,
+      handleType: "edgePull",
+      handleFinish: "black",
+    };
+    setParams((prev) => ({
+      ...prev,
+      wardrobeUnits: [...(prev.wardrobeUnits || []), newUnit],
+      selectedWardrobeUnitId: newUnit.id,
+    }));
+  };
+
+  const deleteSelectedWardrobeUnit = () => {
+    if (wardrobeUnits.length <= 1 || !selectedWardrobeUnit) return;
+    const filtered = wardrobeUnits.filter((u) => u.id !== selectedWardrobeUnit.id);
+    setParams((prev) => ({
+      ...prev,
+      wardrobeUnits: filtered,
+      selectedWardrobeUnitId: filtered[0].id,
+    }));
+  };
+
+  const duplicateSelectedWardrobeUnit = () => {
+    if (!selectedWardrobeUnit) return;
+    const clone: WardrobeUnit = {
+      ...selectedWardrobeUnit,
+      id: `${selectedWardrobeUnit.type}-${Date.now()}`,
+      name: `${selectedWardrobeUnit.name} (Copy)`,
+    };
+    setParams((prev) => ({
+      ...prev,
+      wardrobeUnits: [...(prev.wardrobeUnits || []), clone],
+      selectedWardrobeUnitId: clone.id,
+    }));
+  };
+
+
   // Optimization & Production Metrics Calculation
   let panelCount = 0;
   let areaM2 = 0;
@@ -185,7 +256,7 @@ export default function ModelerControls({
       <div className={styles.sidebarHeader}>
         <h2 className={styles.sidebarTitle}>CAD Inspector</h2>
         <span style={{ fontSize: "0.72rem", color: "var(--accent)", fontWeight: 600 }}>
-          {params.category === "Cabinet" ? "KITCHEN STUDIO" : "PARAMETRIC 3D"}
+          {params.category === "Cabinet" ? "KITCHEN STUDIO" : params.category === "Wardrobe" ? "WARDROBE STUDIO" : "PARAMETRIC 3D"}
         </span>
       </div>
 
@@ -312,6 +383,99 @@ export default function ModelerControls({
           </div>
         )}
 
+
+        {/* WARDROBE MULTI-SECTION MANAGER (When category is Wardrobe) */}
+        {params.category === "Wardrobe" && (
+          <div
+            className={`${styles.accordionSection} ${
+              openSections.wardrobeUnits ? styles.accordionSectionOpen : ""
+            }`}
+          >
+            <button
+              type="button"
+              className={styles.accordionHeader}
+              onClick={() => toggleSection("wardrobeUnits")}
+            >
+              <div className={styles.accordionTitleGroup}>
+                <MdLayers size={16} color="var(--accent)" />
+                <span>Wardrobe Divisions (${wardrobeUnits.length} Units)</span>
+              </div>
+              {openSections.wardrobeUnits ? <MdExpandMore size={18} /> : <MdChevronRight size={18} />}
+            </button>
+
+            {openSections.wardrobeUnits && (
+              <div className={styles.accordionBody}>
+                {/* Unit Selector Chips */}
+                <div className={styles.unitChipList}>
+                  {wardrobeUnits.map((u) => {
+                    const isSelected = selectedWardrobeUnit?.id === u.id;
+                    return (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => updateParam("selectedWardrobeUnitId", u.id)}
+                        className={`${styles.unitChip} ${
+                          isSelected ? styles.unitChipActive : ""
+                        }`}
+                      >
+                        <span>{u.type === "main" ? "🚪" : "⬆️"}</span>
+                        <span>{u.name || (u.type === "main" ? "Division" : "Top")}</span>
+                        <span style={{ opacity: 0.7, fontSize: "0.7rem" }}>({u.width}mm)</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Add Actions */}
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                  <button
+                    type="button"
+                    onClick={() => addWardrobeUnit("main")}
+                    className={styles.unitAddBtn}
+                  >
+                    <MdAdd size={14} />
+                    <span>+ Add Division</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => addWardrobeUnit("top")}
+                    className={styles.unitAddBtn}
+                  >
+                    <MdAdd size={14} />
+                    <span>+ Add Top Unit</span>
+                  </button>
+                </div>
+
+                {/* Active Unit Action Bar */}
+                {selectedWardrobeUnit && (
+                  <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.2rem" }}>
+                    <button
+                      type="button"
+                      onClick={duplicateSelectedWardrobeUnit}
+                      className={styles.segmentedBtn}
+                      style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.3rem" }}
+                    >
+                      <MdContentCopy size={13} />
+                      <span>Duplicate Unit</span>
+                    </button>
+                    {wardrobeUnits.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={deleteSelectedWardrobeUnit}
+                        className={styles.deleteUnitBtn}
+                        style={{ margin: 0, padding: "0.45rem 0.65rem" }}
+                        title="Delete selected division"
+                      >
+                        <MdDeleteOutline size={15} />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* SECTION 1: DIMENSIONS */}
         <div
           className={`${styles.accordionSection} ${
@@ -328,6 +492,8 @@ export default function ModelerControls({
               <span>
                 {params.category === "Cabinet" && selectedUnit
                   ? `Dimensions: ${selectedUnit.name}`
+                  : params.category === "Wardrobe" && selectedWardrobeUnit
+                  ? `Dimensions: ${selectedWardrobeUnit.name}`
                   : "Dimensions (X, Y, Z)"}
               </span>
             </div>
@@ -336,7 +502,76 @@ export default function ModelerControls({
 
           {openSections.dimensions && (
             <div className={styles.accordionBody}>
-              {params.category === "Cabinet" && selectedUnit ? (
+              
+              {params.category === "Wardrobe" && selectedWardrobeUnit ? (
+                <>
+                  <div className={styles.sliderCard}>
+                    <div className={styles.sliderHead}>
+                      <span className={styles.sliderName}>Division Width (X)</span>
+                      <CadNumberInput
+                        value={selectedWardrobeUnit.width}
+                        onChange={(val) => updateSelectedWardrobeUnit({ width: val })}
+                        min={400}
+                        max={1400}
+                        unit="mm"
+                      />
+                    </div>
+                    <input
+                      type="range"
+                      min={400}
+                      max={1400}
+                      step={20}
+                      value={selectedWardrobeUnit.width}
+                      onChange={(e) => updateSelectedWardrobeUnit({ width: Number(e.target.value) })}
+                      className={styles.rangeSlider}
+                    />
+                  </div>
+
+                  <div className={styles.sliderCard}>
+                    <div className={styles.sliderHead}>
+                      <span className={styles.sliderName}>Height (Y)</span>
+                      <CadNumberInput
+                        value={selectedWardrobeUnit.height}
+                        onChange={(val) => updateSelectedWardrobeUnit({ height: val })}
+                        min={selectedWardrobeUnit.type === "top" ? 300 : 1600}
+                        max={selectedWardrobeUnit.type === "top" ? 900 : 2600}
+                        unit="mm"
+                      />
+                    </div>
+                    <input
+                      type="range"
+                      min={selectedWardrobeUnit.type === "top" ? 300 : 1600}
+                      max={selectedWardrobeUnit.type === "top" ? 900 : 2600}
+                      step={20}
+                      value={selectedWardrobeUnit.height}
+                      onChange={(e) => updateSelectedWardrobeUnit({ height: Number(e.target.value) })}
+                      className={styles.rangeSlider}
+                    />
+                  </div>
+
+                  <div className={styles.sliderCard}>
+                    <div className={styles.sliderHead}>
+                      <span className={styles.sliderName}>Depth (Z)</span>
+                      <CadNumberInput
+                        value={selectedWardrobeUnit.depth}
+                        onChange={(val) => updateSelectedWardrobeUnit({ depth: val })}
+                        min={450}
+                        max={800}
+                        unit="mm"
+                      />
+                    </div>
+                    <input
+                      type="range"
+                      min={450}
+                      max={800}
+                      step={10}
+                      value={selectedWardrobeUnit.depth}
+                      onChange={(e) => updateSelectedWardrobeUnit({ depth: Number(e.target.value) })}
+                      className={styles.rangeSlider}
+                    />
+                  </div>
+                </>
+              ) : params.category === "Cabinet" && selectedUnit ? (
                 <>
                   {/* Selected Kitchen Cabinet Dimensions */}
                   <div className={styles.sliderCard}>
@@ -522,7 +757,7 @@ export default function ModelerControls({
 
           {openSections.geometry && (
             <div className={styles.accordionBody}>
-              {params.category === "Cabinet" && (
+              {(params.category === "Cabinet" || params.category === "Wardrobe") && (
                 <>
                   <div className={styles.controlGroup}>
                     <label className={styles.groupLabel}>Toe Kick / Base Type</label>
@@ -800,6 +1035,8 @@ export default function ModelerControls({
                 <span>
                   {params.category === "Cabinet" && selectedUnit
                     ? `Doors & Drawers: ${selectedUnit.name}`
+                    : params.category === "Wardrobe" && selectedWardrobeUnit
+                    ? `Doors & Facade: ${selectedWardrobeUnit.name}`
                     : "Doors & Drawers"}
                 </span>
               </div>
@@ -808,6 +1045,186 @@ export default function ModelerControls({
 
             {openSections.openings && (
               <div className={styles.accordionBody}>
+                {params.category === "Wardrobe" && selectedWardrobeUnit && (
+                  <>
+                    {/* Door Type: Sliding, Hinged Single, Hinged Double, Open */}
+                    <div className={styles.controlGroup}>
+                      <label className={styles.groupLabel}>Door Style</label>
+                      <div className={styles.segmentedGrid4}>
+                        {[
+                          { id: "sliding", label: "Sliding" },
+                          { id: "hingedDouble", label: "Hinged 2x" },
+                          { id: "hingedSingle", label: "Hinged 1x" },
+                          { id: "open", label: "Open Front" },
+                        ].map((d) => (
+                          <button
+                            key={d.id}
+                            type="button"
+                            onClick={() => updateSelectedWardrobeUnit({ doorType: d.id as WardrobeUnit["doorType"] })}
+                            className={`${styles.segmentedBtn} ${
+                              selectedWardrobeUnit.doorType === d.id ? styles.segmentedBtnActive : ""
+                            }`}
+                          >
+                            {d.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Mirror on Doors Option */}
+                    {selectedWardrobeUnit.doorType !== "open" && (
+                      <div className={styles.controlGroup}>
+                        <label className={styles.groupLabel}>Door Mirror Option</label>
+                        <div className={styles.segmentedGrid3}>
+                          {[
+                            { id: "none", label: "Wood Door", mirror: false, type: "full" },
+                            { id: "full", label: "Full Mirror", mirror: true, type: "full" },
+                            { id: "center", label: "Center Panel", mirror: true, type: "center" },
+                          ].map((m) => {
+                            const isMatch = m.id === "none"
+                              ? !selectedWardrobeUnit.hasMirror
+                              : selectedWardrobeUnit.hasMirror && selectedWardrobeUnit.mirrorType === m.type;
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                onClick={() =>
+                                  updateSelectedWardrobeUnit({
+                                    hasMirror: m.mirror,
+                                    mirrorType: m.type as WardrobeUnit["mirrorType"],
+                                  })
+                                }
+                                className={`${styles.segmentedBtn} ${
+                                  isMatch ? styles.segmentedBtnActive : ""
+                                }`}
+                              >
+                                {m.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 3D Door Open Slider */}
+                    {selectedWardrobeUnit.doorType !== "open" && (
+                      <div className={styles.actionSliderCard}>
+                        <div className={styles.actionSliderHead}>
+                          <span>
+                            {selectedWardrobeUnit.doorType === "sliding"
+                              ? "3D Sliding Door Position"
+                              : "3D Door Swing Angle"}
+                          </span>
+                          <span className={styles.interactiveVal}>
+                            {selectedWardrobeUnit.doorType === "sliding"
+                              ? `${selectedWardrobeUnit.doorOpenPercent || 0}%`
+                              : `${Math.round(((selectedWardrobeUnit.doorOpenPercent || 0) * 90) / 100)}°`}
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={selectedWardrobeUnit.doorOpenPercent || 0}
+                          onChange={(e) =>
+                            updateSelectedWardrobeUnit({ doorOpenPercent: Number(e.target.value) })
+                          }
+                          className={styles.rangeSlider}
+                        />
+                      </div>
+                    )}
+
+                    {/* Drawers Configuration */}
+                    <div className={styles.controlGroup} style={{ marginTop: "0.5rem" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
+                        <label className={styles.groupLabel} style={{ margin: 0 }}>Drawers</label>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateSelectedWardrobeUnit({
+                              hasDrawers: !selectedWardrobeUnit.hasDrawers,
+                              drawerCount: !selectedWardrobeUnit.hasDrawers ? 2 : 0,
+                            })
+                          }
+                          className={`${styles.toggleTrack} ${
+                            selectedWardrobeUnit.hasDrawers ? styles.toggleTrackActive : ""
+                          }`}
+                        >
+                          <div
+                            className={`${styles.toggleKnob} ${
+                              selectedWardrobeUnit.hasDrawers ? styles.toggleKnobActive : ""
+                            }`}
+                          />
+                        </button>
+                      </div>
+
+                      {selectedWardrobeUnit.hasDrawers && (
+                        <>
+                          <div className={styles.segmentedGrid2} style={{ marginBottom: "0.5rem" }}>
+                            {[
+                              { id: "externalBottom", label: "External Bottom" },
+                              { id: "internal", label: "Internal Concealed" },
+                            ].map((p) => (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() =>
+                                  updateSelectedWardrobeUnit({ drawerType: p.id as WardrobeUnit["drawerType"] })
+                                }
+                                className={`${styles.segmentedBtn} ${
+                                  (selectedWardrobeUnit.drawerType || "externalBottom") === p.id
+                                    ? styles.segmentedBtnActive
+                                    : ""
+                                }`}
+                              >
+                                {p.label}
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className={styles.segmentedGrid4}>
+                            {[1, 2, 3, 4].map((cnt) => (
+                              <button
+                                key={cnt}
+                                type="button"
+                                onClick={() => updateSelectedWardrobeUnit({ drawerCount: cnt })}
+                                className={`${styles.segmentedBtn} ${
+                                  (selectedWardrobeUnit.drawerCount || 2) === cnt
+                                    ? styles.segmentedBtnActive
+                                    : ""
+                                }`}
+                              >
+                                {cnt} {cnt === 1 ? "Drawer" : "Drawers"}
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className={styles.actionSliderCard} style={{ marginTop: "0.4rem" }}>
+                            <div className={styles.actionSliderHead}>
+                              <span>3D Pull Drawers Out</span>
+                              <span className={styles.interactiveVal}>
+                                {selectedWardrobeUnit.drawerOpenPercent || 0}%
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0}
+                              max={100}
+                              step={1}
+                              value={selectedWardrobeUnit.drawerOpenPercent || 0}
+                              onChange={(e) =>
+                                updateSelectedWardrobeUnit({ drawerOpenPercent: Number(e.target.value) })
+                              }
+                              className={styles.rangeSlider}
+                            />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+
                 {params.category === "Cabinet" && selectedUnit && (
                   <>
                     {/* Selected Unit Door Configuration */}
@@ -1024,6 +1441,76 @@ export default function ModelerControls({
 
           {openSections.divisions && (
             <div className={styles.accordionBody}>
+              {params.category === "Wardrobe" && selectedWardrobeUnit && (
+                <>
+                  <div className={styles.controlGroup}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
+                      <label className={styles.groupLabel} style={{ margin: 0 }}>Clothes Hanging Rod & Hangers</label>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateSelectedWardrobeUnit({
+                            hasClothesHangerRail: !selectedWardrobeUnit.hasClothesHangerRail,
+                          })
+                        }
+                        className={`${styles.toggleTrack} ${
+                          selectedWardrobeUnit.hasClothesHangerRail ? styles.toggleTrackActive : ""
+                        }`}
+                      >
+                        <div
+                          className={`${styles.toggleKnob} ${
+                            selectedWardrobeUnit.hasClothesHangerRail ? styles.toggleKnobActive : ""
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className={styles.controlGroup}>
+                    <label className={styles.groupLabel}>Horizontal Shelves</label>
+                    <div className={styles.segmentedGrid6}>
+                      {[0, 1, 2, 3, 4, 5].map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => updateSelectedWardrobeUnit({ internalShelves: s })}
+                          className={`${styles.segmentedBtn} ${
+                            (selectedWardrobeUnit.internalShelves ?? 2) === s
+                              ? styles.segmentedBtnActive
+                              : ""
+                          }`}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className={styles.controlGroup}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
+                      <label className={styles.groupLabel} style={{ margin: 0 }}>Center Vertical Partition</label>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateSelectedWardrobeUnit({
+                            hasInternalDivider: !selectedWardrobeUnit.hasInternalDivider,
+                          })
+                        }
+                        className={`${styles.toggleTrack} ${
+                          selectedWardrobeUnit.hasInternalDivider ? styles.toggleTrackActive : ""
+                        }`}
+                      >
+                        <div
+                          className={`${styles.toggleKnob} ${
+                            selectedWardrobeUnit.hasInternalDivider ? styles.toggleKnobActive : ""
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+
               {params.category === "Shelf" && (
                 <>
                   {/* Upright Divider Columns (Bays: 1-5 buttons) */}
