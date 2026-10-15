@@ -20,6 +20,7 @@ import {
   MdSwapVert,
 } from "react-icons/md";
 import styles from "./modeler.module.css";
+import CadNumberInput from "./CadNumberInput";
 
 interface CadActionToolbarProps {
   params: FurnitureParams;
@@ -31,7 +32,7 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
   const activeTool = params.activeTool || "select";
   const selectedDivision = params.selectedDivision;
 
-  const setTool = (tool: "select" | "select-division" | "box-select" | "add-base" | "add-v-division" | "add-h-division") => {
+  const setTool = (tool: "select" | "select-division" | "box-select" | "add-base" | "add-wall" | "add-v-division" | "add-h-division") => {
     setParams((prev) => ({
       ...prev,
       activeTool: prev.activeTool === tool ? "select" : tool,
@@ -66,7 +67,9 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
       case "select-division":
         return "📐 Select Division: Click any shelf, divider, or partition in 3D to move or delete";
       case "add-base":
-        return "➕ Add Unit: Click then hover near existing carcass sides to snap";
+        return "➕ Add Base: Click near existing carcass sides to snap";
+      case "add-wall":
+        return "➕ Add Wall Unit: Click above base cabinet or left/right of wall unit to snap";
       case "add-v-division":
         return "➗ Vertical Division: Click on carcass to place a vertical divider";
       case "add-h-division":
@@ -93,6 +96,7 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
         width: 900,
         height: 720,
         depth: 900,
+        cornerDepth: 600,
         doorType: "cornerDouble",
         drawerCount: 0,
         internalShelves: 1,
@@ -107,16 +111,45 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
       }));
     };
 
+    const addCornerWallCabinet = () => {
+      const cornerWallCount = kitchenUnits.filter((u) => u.type === "corner-wall").length;
+      const newCornerWall: KitchenCabinetUnit = {
+        id: `corner-wall-${Date.now()}`,
+        name: `Corner Wall ${cornerWallCount + 1} (90°)`,
+        type: "corner-wall",
+        orientation: "corner-right",
+        width: 600,
+        height: 720,
+        depth: 600,
+        cornerDepth: 350,
+        bottomOffset: 600,
+        doorType: "cornerDouble",
+        drawerCount: 0,
+        internalShelves: 2,
+        handleType: selectedUnit?.handleType || "bar",
+        handleFinish: selectedUnit?.handleFinish || "black",
+      };
+      setParams((prev) => ({
+        ...prev,
+        kitchenUnits: [...(prev.kitchenUnits || []), newCornerWall],
+        selectedUnitId: newCornerWall.id,
+        selectedUnitIds: [newCornerWall.id],
+      }));
+    };
+
     const addWallCabinet = () => {
       const wallCount = kitchenUnits.filter((u) => u.type === "wall").length;
       const baseRef = selectedUnit?.type === "base" ? selectedUnit : kitchenUnits.find((u) => u.type === "base");
+      const resolvedAxis = (selectedUnit?.type === "wall" ? selectedUnit.runAxis : undefined) || "run0";
       const newUnit: KitchenCabinetUnit = {
         id: `wall-${Date.now()}`,
-        name: `Wall Cabinet ${wallCount + 1}`,
+        name: `Wall Cabinet ${wallCount + 1}${resolvedAxis === "run1" ? " (Turned)" : ""}`,
         type: "wall",
+        runAxis: resolvedAxis,
         width: baseRef ? baseRef.width : 600,
-        height: 600,
+        height: 720,
         depth: 350,
+        bottomOffset: 600,
         doorType: "double",
         drawerCount: 0,
         internalShelves: 2,
@@ -214,11 +247,27 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
 
         <button
           type="button"
-          onClick={addWallCabinet}
+          onClick={addCornerWallCabinet}
           className={styles.cadActionBtn}
-          title="Add Upper Wall Cabinet"
+          title="Add 90° Corner Wall Cabinet"
         >
-          <MdVerticalAlignTop size={15} color="#93c5fd" />
+          <MdTurnRight size={16} color="#c084fc" />
+          <span>+ Corner Wall (90°)</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (kitchenUnits.length === 0) {
+              addWallCabinet();
+            } else {
+              setTool("add-wall");
+            }
+          }}
+          className={`${styles.cadActionBtn} ${activeTool === "add-wall" ? styles.cadActionBtnActive : ""}`}
+          title="Add Upper Wall Cabinet: Snap above base or left/right of wall unit"
+        >
+          <MdVerticalAlignTop size={15} color="#c084fc" />
           <span>+ Wall Unit</span>
         </button>
 
@@ -428,18 +477,104 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
           </button>
         )}
 
-        {selectedDivision && (
-          <button
-            type="button"
-            onClick={deleteSelectedDivision}
-            className={styles.cadActionBtn}
-            style={{ color: "#f59e0b", background: "rgba(245, 158, 11, 0.12)" }}
-            title="Delete Selected Division"
-          >
-            <MdDeleteOutline size={15} color="#f59e0b" />
-            <span>Delete Division</span>
-          </button>
-        )}
+        {/* Selected Division Action for Wardrobe */}
+        {selectedDivision && (() => {
+          const targetUnit = wardrobeUnits.find((u) => u.id === selectedDivision.unitId) ||
+            wardrobeUnits.find((u) => u.id === params.selectedWardrobeUnitId) ||
+            wardrobeUnits[0];
+          if (!targetUnit) return null;
+
+          const isPartition = selectedDivision.type === "partition";
+          const shelfIdx = selectedDivision.index ?? 0;
+          const curVal = isPartition
+            ? (targetUnit.partitionOffset ?? 0)
+            : (targetUnit.shelfOffsets?.[shelfIdx] ?? 0);
+
+          const updateOffset = (newVal: number) => {
+            const clamped = Math.max(-250, Math.min(250, Math.round(newVal)));
+            const updated = wardrobeUnits.map((u) => {
+              if (u.id !== targetUnit.id) return u;
+              if (isPartition) {
+                return { ...u, partitionOffset: clamped };
+              } else {
+                const curOffsets = [...(u.shelfOffsets || [])];
+                curOffsets[shelfIdx] = clamped;
+                return { ...u, shelfOffsets: curOffsets };
+              }
+            });
+            setParams((prev) => ({ ...prev, wardrobeUnits: updated }));
+          };
+
+          return (
+            <>
+              <div className={styles.cadActionDivider} />
+              <div style={{ padding: "0.2rem 0.35rem", minWidth: "155px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                  <span style={{ fontSize: "10px", fontWeight: 700, color: "#fbbf24" }}>
+                    {isPartition ? "PARTITION (X)" : `SHELF ${shelfIdx + 1} (Y)`}
+                  </span>
+                  <CadNumberInput
+                    value={curVal}
+                    onChange={updateOffset}
+                    min={-250}
+                    max={250}
+                    step={5}
+                    unit="mm"
+                  />
+                </div>
+                <div style={{ display: "flex", gap: "4px", marginBottom: "4px" }}>
+                  <button
+                    type="button"
+                    onClick={() => updateOffset(curVal - 15)}
+                    className={styles.cadActionBtn}
+                    style={{ flex: 1, padding: "3px 4px", justifyContent: "center", fontSize: "11px" }}
+                    title="Move -15mm"
+                  >
+                    {isPartition ? <MdSwapHoriz size={14} /> : <MdSwapVert size={14} />} -15
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateOffset(0)}
+                    className={styles.cadActionBtn}
+                    style={{ flex: 1, padding: "3px 4px", justifyContent: "center", fontSize: "10px", color: "#60a5fa" }}
+                    title={isPartition ? "Center (0mm)" : "Reset (0mm)"}
+                  >
+                    {isPartition ? "Center" : "Reset"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateOffset(curVal + 15)}
+                    className={styles.cadActionBtn}
+                    style={{ flex: 1, padding: "3px 4px", justifyContent: "center", fontSize: "11px" }}
+                    title="Move +15mm"
+                  >
+                    {isPartition ? <MdSwapHoriz size={14} /> : <MdSwapVert size={14} />} +15
+                  </button>
+                </div>
+                <input
+                  type="range"
+                  min={-250}
+                  max={250}
+                  step={5}
+                  value={curVal}
+                  onChange={(e) => updateOffset(Number(e.target.value))}
+                  className={styles.rangeSlider}
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={deleteSelectedDivision}
+                className={styles.cadActionBtn}
+                style={{ color: "#f59e0b", background: "rgba(245, 158, 11, 0.12)" }}
+                title="Delete Selected Division"
+              >
+                <MdDeleteOutline size={15} color="#f59e0b" />
+                <span>Delete {isPartition ? "Partition" : "Shelf"}</span>
+              </button>
+            </>
+          );
+        })()}
 
         {getHelperHint() && (
           <div className={styles.cadActionHelperHint}>
@@ -532,10 +667,35 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
           <>
             <div className={styles.cadActionDivider} />
             <div style={{ padding: "0.2rem 0.35rem" }}>
-              <div style={{ fontSize: "10px", fontWeight: 700, color: "#fbbf24", marginBottom: "4px" }}>
-                {selectedDivision.type === "partition"
-                  ? `DIVIDER ${(selectedDivision.index ?? 0) + 1}`
-                  : `SHELF ${(selectedDivision.index ?? 0) + 1}`}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                <span style={{ fontSize: "10px", fontWeight: 700, color: "#fbbf24" }}>
+                  {selectedDivision.type === "partition"
+                    ? `DIVIDER ${(selectedDivision.index ?? 0) + 1}`
+                    : `SHELF ${(selectedDivision.index ?? 0) + 1}`}
+                </span>
+                <CadNumberInput
+                  value={
+                    selectedDivision.type === "partition"
+                      ? params.shelfColumnOffsets?.[selectedDivision.index ?? 0] ?? 0
+                      : params.shelfRowOffsets?.[selectedDivision.index ?? 0] ?? 0
+                  }
+                  onChange={(val) => {
+                    const idx = selectedDivision.index ?? 0;
+                    if (selectedDivision.type === "partition") {
+                      const cur = [...(params.shelfColumnOffsets || [])];
+                      cur[idx] = val;
+                      setParams((p) => ({ ...p, shelfColumnOffsets: cur }));
+                    } else {
+                      const cur = [...(params.shelfRowOffsets || [])];
+                      cur[idx] = val;
+                      setParams((p) => ({ ...p, shelfRowOffsets: cur }));
+                    }
+                  }}
+                  min={-250}
+                  max={250}
+                  step={5}
+                  unit="mm"
+                />
               </div>
               <div style={{ display: "flex", gap: "4px", marginBottom: "4px" }}>
                 <button
@@ -564,6 +724,26 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
                     const idx = selectedDivision.index ?? 0;
                     if (selectedDivision.type === "partition") {
                       const cur = [...(params.shelfColumnOffsets || [])];
+                      cur[idx] = 0;
+                      setParams(p => ({ ...p, shelfColumnOffsets: cur }));
+                    } else {
+                      const cur = [...(params.shelfRowOffsets || [])];
+                      cur[idx] = 0;
+                      setParams(p => ({ ...p, shelfRowOffsets: cur }));
+                    }
+                  }}
+                  className={styles.cadActionBtn}
+                  style={{ flex: 1, padding: "3px 4px", justifyContent: "center", fontSize: "10px", color: "#60a5fa" }}
+                  title={selectedDivision.type === "partition" ? "Center (0mm)" : "Reset (0mm)"}
+                >
+                  0mm
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const idx = selectedDivision.index ?? 0;
+                    if (selectedDivision.type === "partition") {
+                      const cur = [...(params.shelfColumnOffsets || [])];
                       cur[idx] = (cur[idx] || 0) + 15;
                       setParams(p => ({ ...p, shelfColumnOffsets: cur }));
                     } else {
@@ -580,41 +760,31 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
                 </button>
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "2px", margin: "4px 0" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "9px", color: "#94a3b8" }}>
-                  <span>Offset</span>
-                  <span style={{ color: "#fbbf24", fontWeight: 700 }}>
-                    {(selectedDivision.type === "partition"
-                      ? params.shelfColumnOffsets?.[selectedDivision.index ?? 0] ?? 0
-                      : params.shelfRowOffsets?.[selectedDivision.index ?? 0] ?? 0)} mm
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min={-150}
-                  max={150}
-                  step={5}
-                  value={
-                    selectedDivision.type === "partition"
-                      ? params.shelfColumnOffsets?.[selectedDivision.index ?? 0] ?? 0
-                      : params.shelfRowOffsets?.[selectedDivision.index ?? 0] ?? 0
+              <input
+                type="range"
+                min={-250}
+                max={250}
+                step={5}
+                value={
+                  selectedDivision.type === "partition"
+                    ? params.shelfColumnOffsets?.[selectedDivision.index ?? 0] ?? 0
+                    : params.shelfRowOffsets?.[selectedDivision.index ?? 0] ?? 0
+                }
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  const idx = selectedDivision.index ?? 0;
+                  if (selectedDivision.type === "partition") {
+                    const cur = [...(params.shelfColumnOffsets || [])];
+                    cur[idx] = val;
+                    setParams(p => ({ ...p, shelfColumnOffsets: cur }));
+                  } else {
+                    const cur = [...(params.shelfRowOffsets || [])];
+                    cur[idx] = val;
+                    setParams(p => ({ ...p, shelfRowOffsets: cur }));
                   }
-                  onChange={(e) => {
-                    const val = Number(e.target.value);
-                    const idx = selectedDivision.index ?? 0;
-                    if (selectedDivision.type === "partition") {
-                      const cur = [...(params.shelfColumnOffsets || [])];
-                      cur[idx] = val;
-                      setParams(p => ({ ...p, shelfColumnOffsets: cur }));
-                    } else {
-                      const cur = [...(params.shelfRowOffsets || [])];
-                      cur[idx] = val;
-                      setParams(p => ({ ...p, shelfRowOffsets: cur }));
-                    }
-                  }}
-                  className={styles.rangeSlider}
-                />
-              </div>
+                }}
+                className={styles.rangeSlider}
+              />
             </div>
 
             <button

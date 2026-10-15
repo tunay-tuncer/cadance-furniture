@@ -577,6 +577,18 @@
   gap: 0.35rem;
 }
 
+.segmentedGrid5 {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.35rem;
+}
+
+.segmentedGrid6 {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.3rem;
+}
+
 .segmentedBtn {
   padding: 0.45rem 0.4rem;
   background: rgba(255, 255, 255, 0.03);

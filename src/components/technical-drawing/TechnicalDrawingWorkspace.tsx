@@ -23,8 +23,42 @@ import {
   MdCropPortrait,
   MdScreenRotation,
   MdEditNote,
+  MdCenterFocusStrong,
 } from "react-icons/md";
 import styles from "./technical-drawing.module.css";
+
+export type ViewKey = "top" | "iso" | "front" | "side";
+
+export interface SnapMarker {
+  x: number;
+  y: number;
+}
+
+export interface SnapGuide {
+  id: string;
+  type: "horizontal" | "vertical";
+  pos: number;
+  label: string;
+  markers: SnapMarker[];
+}
+
+export interface ViewMetrics {
+  key: ViewKey;
+  svgW: number;
+  svgH: number;
+  boxLeft: number;
+  boxRight: number;
+  boxCenterX: number;
+  boxTop: number;
+  boxBottom: number;
+  boxCenterY: number;
+  modelLeft: number;
+  modelRight: number;
+  modelCenterX: number;
+  modelTop: number;
+  modelBottom: number;
+  modelCenterY: number;
+}
 
 interface TechnicalDrawingWorkspaceProps {
   params: FurnitureParams;
@@ -224,6 +258,78 @@ export default function TechnicalDrawingWorkspace({
   );
 
 
+  // Viewport Scale factor for screen SVG rendering (computed early for geometry metrics)
+  const viewScale = useMemo(() => {
+    if (scaleMode === "1:10") return 0.1;
+    if (scaleMode === "1:15") return 1 / 15;
+    if (scaleMode === "1:20") return 0.05;
+    if (scaleMode === "1:25") return 0.04;
+    if (scaleMode === "1:50") return 0.02;
+    if (scaleMode === "custom") return customScale;
+
+    // Auto-fit calculation
+    const maxDim = Math.max(frontView.width, frontView.height, topView.height, isoView.width, 1200);
+    const targetW = pageSize === "A3" ? 420 : 320;
+    return targetW / maxDim;
+  }, [frontView, topView, isoView, pageSize, scaleMode, customScale]);
+
+  // Lookup dictionary for geometry data
+  const viewGeometries = useMemo<Record<ViewKey, ViewGeometry>>(() => ({
+    top: topView,
+    iso: isoView,
+    front: frontView,
+    side: sideView,
+  }), [topView, isoView, frontView, sideView]);
+
+  // Compute exact pixel metrics for any viewport given its sheet position
+  const getViewMetrics = useCallback(
+    (key: ViewKey, pos: { x: number; y: number }): ViewMetrics => {
+      const geom = viewGeometries[key];
+      const svgW = Math.max(160, geom.width * viewScale + 80);
+      const svgH = Math.max(140, geom.height * viewScale + 70);
+
+      // Inner model bounds inside viewportContainer
+      // Header: 22px, Container padding: 4px, SVG inner origin: (40, 30)
+      const modelLeft = pos.x + 44;
+      const modelWidth = geom.width * viewScale;
+      const modelRight = modelLeft + modelWidth;
+      const modelCenterX = modelLeft + modelWidth / 2;
+
+      const modelTop = pos.y + 56;
+      const modelHeight = geom.height * viewScale;
+      const modelBottom = modelTop + modelHeight;
+      const modelCenterY = modelTop + modelHeight / 2;
+
+      const boxLeft = pos.x;
+      const boxTop = pos.y;
+      const boxWidth = svgW + 8;
+      const boxHeight = svgH + 30; // 22px header + 8px padding
+      const boxRight = boxLeft + boxWidth;
+      const boxBottom = boxTop + boxHeight;
+      const boxCenterX = boxLeft + boxWidth / 2;
+      const boxCenterY = boxTop + boxHeight / 2;
+
+      return {
+        key,
+        svgW,
+        svgH,
+        boxLeft,
+        boxRight,
+        boxCenterX,
+        boxTop,
+        boxBottom,
+        boxCenterY,
+        modelLeft,
+        modelRight,
+        modelCenterX,
+        modelTop,
+        modelBottom,
+        modelCenterY,
+      };
+    },
+    [viewGeometries, viewScale]
+  );
+
   // Default Viewport positions relative to sheet
   const defaultPositions = useMemo(() => {
     const W = paperDimensions.width;
@@ -258,8 +364,11 @@ export default function TechnicalDrawingWorkspace({
     [customPositions, defaultPositions]
   );
 
-  // Dragging viewports interaction
-  const [draggingView, setDraggingView] = useState<string | null>(null);
+  // Dragging viewports interaction & magnetic snapping guides
+  const [draggingView, setDraggingView] = useState<ViewKey | null>(null);
+  const [snappingEnabled, setSnappingEnabled] = useState<boolean>(true);
+  const [activeGuides, setActiveGuides] = useState<SnapGuide[]>([]);
+
   const dragStartRef = useRef<{ mouseX: number; mouseY: number; initialX: number; initialY: number }>({
     mouseX: 0,
     mouseY: 0,
@@ -300,7 +409,7 @@ export default function TechnicalDrawingWorkspace({
   };
 
   const handleMouseDownViewport = (
-    viewKey: "top" | "iso" | "front" | "side",
+    viewKey: ViewKey,
     e: React.MouseEvent
   ) => {
     // Only drag individual viewports on left-click (button 0)
@@ -329,14 +438,311 @@ export default function TechnicalDrawingWorkspace({
     }
 
     if (draggingView) {
-      const dx = (e.clientX - dragStartRef.current.mouseX) / zoomRef.current;
-      const dy = (e.clientY - dragStartRef.current.mouseY) / zoomRef.current;
+      const rawDx = (e.clientX - dragStartRef.current.mouseX) / zoomRef.current;
+      const rawDy = (e.clientY - dragStartRef.current.mouseY) / zoomRef.current;
+      let targetX = dragStartRef.current.initialX + rawDx;
+      let targetY = dragStartRef.current.initialY + rawDy;
+
+      const currentGuides: SnapGuide[] = [];
+
+      if (snappingEnabled) {
+        const SNAP_THRESHOLD = 8;
+        const activeKey = draggingView;
+        const initialDragMetrics = getViewMetrics(activeKey, { x: targetX, y: targetY });
+
+        const otherKeys: ViewKey[] = (["top", "iso", "front", "side"] as ViewKey[]).filter(
+          (k) => k !== activeKey
+        );
+
+        let bestDeltaY: number | null = null;
+        let bestCandY: {
+          otherVal: number;
+          otherMarkers: SnapMarker[];
+          getDragMarkers: (sm: ViewMetrics) => SnapMarker[];
+          label: string;
+        } | null = null;
+
+        let bestDeltaX: number | null = null;
+        let bestCandX: {
+          otherVal: number;
+          otherMarkers: SnapMarker[];
+          getDragMarkers: (sm: ViewMetrics) => SnapMarker[];
+          label: string;
+        } | null = null;
+
+        for (const otherKey of otherKeys) {
+          const otherPos = viewPositions[otherKey];
+          const otherMetrics = getViewMetrics(otherKey, otherPos);
+
+          // Horizontal alignment candidates (Y-coordinates: baselines, top edges, centerlines, borders)
+          const yCandidates = [
+            // 1. Model Baseline to Baseline (Ground floor continuous alignment)
+            {
+              dragVal: initialDragMetrics.modelBottom,
+              otherVal: otherMetrics.modelBottom,
+              label: "⇥ Ground Baseline Alignment (Bottom ↔ Bottom)",
+              otherMarkers: [
+                { x: otherMetrics.modelLeft, y: otherMetrics.modelBottom },
+                { x: otherMetrics.modelRight, y: otherMetrics.modelBottom },
+              ],
+              getDragMarkers: (sm: ViewMetrics) => [
+                { x: sm.modelLeft, y: otherMetrics.modelBottom },
+                { x: sm.modelRight, y: otherMetrics.modelBottom },
+              ],
+            },
+            // 2. Model Top to Top (Continuous ceiling/cabinet height alignment)
+            {
+              dragVal: initialDragMetrics.modelTop,
+              otherVal: otherMetrics.modelTop,
+              label: "⇥ Top Edge Alignment (Top ↔ Top)",
+              otherMarkers: [
+                { x: otherMetrics.modelLeft, y: otherMetrics.modelTop },
+                { x: otherMetrics.modelRight, y: otherMetrics.modelTop },
+              ],
+              getDragMarkers: (sm: ViewMetrics) => [
+                { x: sm.modelLeft, y: otherMetrics.modelTop },
+                { x: sm.modelRight, y: otherMetrics.modelTop },
+              ],
+            },
+            // 3. Model Base to Top (Stacking views top/bottom)
+            {
+              dragVal: initialDragMetrics.modelBottom,
+              otherVal: otherMetrics.modelTop,
+              label: "⇥ Base-to-Top Edge Snap",
+              otherMarkers: [
+                { x: otherMetrics.modelLeft, y: otherMetrics.modelTop },
+                { x: otherMetrics.modelRight, y: otherMetrics.modelTop },
+              ],
+              getDragMarkers: (sm: ViewMetrics) => [
+                { x: sm.modelLeft, y: otherMetrics.modelTop },
+                { x: sm.modelRight, y: otherMetrics.modelTop },
+              ],
+            },
+            // 4. Model Top to Base
+            {
+              dragVal: initialDragMetrics.modelTop,
+              otherVal: otherMetrics.modelBottom,
+              label: "⇥ Top-to-Base Edge Snap",
+              otherMarkers: [
+                { x: otherMetrics.modelLeft, y: otherMetrics.modelBottom },
+                { x: otherMetrics.modelRight, y: otherMetrics.modelBottom },
+              ],
+              getDragMarkers: (sm: ViewMetrics) => [
+                { x: sm.modelLeft, y: otherMetrics.modelBottom },
+                { x: sm.modelRight, y: otherMetrics.modelBottom },
+              ],
+            },
+            // 5. Model Center Y to Center Y (Horizontal axis alignment)
+            {
+              dragVal: initialDragMetrics.modelCenterY,
+              otherVal: otherMetrics.modelCenterY,
+              label: "⇥ Horizontal Axis Alignment (Center Y)",
+              otherMarkers: [
+                { x: otherMetrics.modelCenterX, y: otherMetrics.modelCenterY },
+              ],
+              getDragMarkers: (sm: ViewMetrics) => [
+                { x: sm.modelCenterX, y: otherMetrics.modelCenterY },
+              ],
+            },
+            // 6. Viewport Container Top to Top
+            {
+              dragVal: initialDragMetrics.boxTop,
+              otherVal: otherMetrics.boxTop,
+              label: "⇥ Viewport Header Alignment (Top ↔ Top)",
+              otherMarkers: [
+                { x: otherMetrics.boxLeft, y: otherMetrics.boxTop },
+                { x: otherMetrics.boxRight, y: otherMetrics.boxTop },
+              ],
+              getDragMarkers: (sm: ViewMetrics) => [
+                { x: sm.boxLeft, y: otherMetrics.boxTop },
+                { x: sm.boxRight, y: otherMetrics.boxTop },
+              ],
+            },
+            // 7. Viewport Container Bottom to Bottom
+            {
+              dragVal: initialDragMetrics.boxBottom,
+              otherVal: otherMetrics.boxBottom,
+              label: "⇥ Viewport Box Bottom Alignment",
+              otherMarkers: [
+                { x: otherMetrics.boxLeft, y: otherMetrics.boxBottom },
+                { x: otherMetrics.boxRight, y: otherMetrics.boxBottom },
+              ],
+              getDragMarkers: (sm: ViewMetrics) => [
+                { x: sm.boxLeft, y: otherMetrics.boxBottom },
+                { x: sm.boxRight, y: otherMetrics.boxBottom },
+              ],
+            },
+          ];
+
+          for (const cand of yCandidates) {
+            const delta = cand.otherVal - cand.dragVal;
+            if (Math.abs(delta) <= SNAP_THRESHOLD) {
+              if (bestDeltaY === null || Math.abs(delta) < Math.abs(bestDeltaY)) {
+                bestDeltaY = delta;
+                bestCandY = cand;
+              }
+            }
+          }
+
+          // Vertical alignment candidates (X-coordinates: left edges, right edges, projection centerlines)
+          const xCandidates = [
+            // 1. Model Left to Left (Vertical projection line across Plan & Elevation)
+            {
+              dragVal: initialDragMetrics.modelLeft,
+              otherVal: otherMetrics.modelLeft,
+              label: "⇤ Left Edge Projection (Left ↔ Left)",
+              otherMarkers: [
+                { x: otherMetrics.modelLeft, y: otherMetrics.modelTop },
+                { x: otherMetrics.modelLeft, y: otherMetrics.modelBottom },
+              ],
+              getDragMarkers: (sm: ViewMetrics) => [
+                { x: otherMetrics.modelLeft, y: sm.modelTop },
+                { x: otherMetrics.modelLeft, y: sm.modelBottom },
+              ],
+            },
+            // 2. Model Right to Right
+            {
+              dragVal: initialDragMetrics.modelRight,
+              otherVal: otherMetrics.modelRight,
+              label: "⇤ Right Edge Projection (Right ↔ Right)",
+              otherMarkers: [
+                { x: otherMetrics.modelRight, y: otherMetrics.modelTop },
+                { x: otherMetrics.modelRight, y: otherMetrics.modelBottom },
+              ],
+              getDragMarkers: (sm: ViewMetrics) => [
+                { x: otherMetrics.modelRight, y: sm.modelTop },
+                { x: otherMetrics.modelRight, y: sm.modelBottom },
+              ],
+            },
+            // 3. Model Center X to Center X (Center projection axis)
+            {
+              dragVal: initialDragMetrics.modelCenterX,
+              otherVal: otherMetrics.modelCenterX,
+              label: "⇤ Center Projection Axis (Center X)",
+              otherMarkers: [
+                { x: otherMetrics.modelCenterX, y: otherMetrics.modelTop },
+                { x: otherMetrics.modelCenterX, y: otherMetrics.modelBottom },
+              ],
+              getDragMarkers: (sm: ViewMetrics) => [
+                { x: otherMetrics.modelCenterX, y: sm.modelTop },
+                { x: otherMetrics.modelCenterX, y: sm.modelBottom },
+              ],
+            },
+            // 4. Model Left to Right
+            {
+              dragVal: initialDragMetrics.modelLeft,
+              otherVal: otherMetrics.modelRight,
+              label: "⇤ Left-to-Right Edge Snap",
+              otherMarkers: [
+                { x: otherMetrics.modelRight, y: otherMetrics.modelTop },
+                { x: otherMetrics.modelRight, y: otherMetrics.modelBottom },
+              ],
+              getDragMarkers: (sm: ViewMetrics) => [
+                { x: otherMetrics.modelRight, y: sm.modelTop },
+                { x: otherMetrics.modelRight, y: sm.modelBottom },
+              ],
+            },
+            // 5. Model Right to Left
+            {
+              dragVal: initialDragMetrics.modelRight,
+              otherVal: otherMetrics.modelLeft,
+              label: "⇤ Right-to-Left Edge Snap",
+              otherMarkers: [
+                { x: otherMetrics.modelLeft, y: otherMetrics.modelTop },
+                { x: otherMetrics.modelLeft, y: otherMetrics.modelBottom },
+              ],
+              getDragMarkers: (sm: ViewMetrics) => [
+                { x: otherMetrics.modelLeft, y: sm.modelTop },
+                { x: otherMetrics.modelLeft, y: sm.modelBottom },
+              ],
+            },
+            // 6. Viewport Container Box Left to Left
+            {
+              dragVal: initialDragMetrics.boxLeft,
+              otherVal: otherMetrics.boxLeft,
+              label: "⇤ Viewport Box Left Alignment",
+              otherMarkers: [
+                { x: otherMetrics.boxLeft, y: otherMetrics.boxTop },
+                { x: otherMetrics.boxLeft, y: otherMetrics.boxBottom },
+              ],
+              getDragMarkers: (sm: ViewMetrics) => [
+                { x: otherMetrics.boxLeft, y: sm.boxTop },
+                { x: otherMetrics.boxLeft, y: sm.boxBottom },
+              ],
+            },
+            // 7. Viewport Container Box Right to Right
+            {
+              dragVal: initialDragMetrics.boxRight,
+              otherVal: otherMetrics.boxRight,
+              label: "⇤ Viewport Box Right Alignment",
+              otherMarkers: [
+                { x: otherMetrics.boxRight, y: otherMetrics.boxTop },
+                { x: otherMetrics.boxRight, y: otherMetrics.boxBottom },
+              ],
+              getDragMarkers: (sm: ViewMetrics) => [
+                { x: otherMetrics.boxRight, y: sm.boxTop },
+                { x: otherMetrics.boxRight, y: sm.boxBottom },
+              ],
+            },
+          ];
+
+          for (const cand of xCandidates) {
+            const delta = cand.otherVal - cand.dragVal;
+            if (Math.abs(delta) <= SNAP_THRESHOLD) {
+              if (bestDeltaX === null || Math.abs(delta) < Math.abs(bestDeltaX)) {
+                bestDeltaX = delta;
+                bestCandX = cand;
+              }
+            }
+          }
+        }
+
+        if (bestDeltaY !== null) {
+          targetY += bestDeltaY;
+        }
+        if (bestDeltaX !== null) {
+          targetX += bestDeltaX;
+        }
+
+        const snappedDragMetrics = getViewMetrics(activeKey, { x: targetX, y: targetY });
+
+        if (bestCandY) {
+          currentGuides.push({
+            id: `guide-y-${bestCandY.label}`,
+            type: "horizontal",
+            pos: bestCandY.otherVal,
+            label: bestCandY.label,
+            markers: [
+              ...bestCandY.otherMarkers,
+              ...bestCandY.getDragMarkers(snappedDragMetrics),
+            ],
+          });
+        }
+
+        if (bestCandX) {
+          currentGuides.push({
+            id: `guide-x-${bestCandX.label}`,
+            type: "vertical",
+            pos: bestCandX.otherVal,
+            label: bestCandX.label,
+            markers: [
+              ...bestCandX.otherMarkers,
+              ...bestCandX.getDragMarkers(snappedDragMetrics),
+            ],
+          });
+        }
+      }
+
+      setActiveGuides(currentGuides);
+
+      const clampedX = Math.max(10, Math.min(paperDimensions.width - 200, targetX));
+      const clampedY = Math.max(10, Math.min(paperDimensions.height - 180, targetY));
 
       setCustomPositions((prev) => ({
         ...prev,
         [draggingView]: {
-          x: Math.max(10, Math.min(paperDimensions.width - 200, dragStartRef.current.initialX + dx)),
-          y: Math.max(10, Math.min(paperDimensions.height - 180, dragStartRef.current.initialY + dy)),
+          x: Math.round(clampedX),
+          y: Math.round(clampedY),
         },
       }));
     }
@@ -349,6 +755,7 @@ export default function TechnicalDrawingWorkspace({
     }
     if (draggingView) {
       setDraggingView(null);
+      setActiveGuides([]);
     }
   };
 
@@ -360,6 +767,7 @@ export default function TechnicalDrawingWorkspace({
         setIsPanning(false);
       }
       setDraggingView(null);
+      setActiveGuides([]);
     };
 
     window.addEventListener("mouseup", handleGlobalMouseUp);
@@ -368,23 +776,17 @@ export default function TechnicalDrawingWorkspace({
     };
   }, []);
 
-  // Viewport Scale factor for screen SVG rendering
-  const viewScale = useMemo(() => {
-    if (scaleMode === "1:10") return 0.1;
-    if (scaleMode === "1:15") return 1 / 15;
-    if (scaleMode === "1:20") return 0.05;
-    if (scaleMode === "1:25") return 0.04;
-    if (scaleMode === "1:50") return 0.02;
-    if (scaleMode === "custom") return customScale;
-
-    // Auto-fit calculation
-    const maxDim = Math.max(frontView.width, frontView.height, topView.height, isoView.width, 1200);
-    const targetW = pageSize === "A3" ? 420 : 320;
-    return targetW / maxDim;
-  }, [frontView, topView, isoView, pageSize, scaleMode, customScale]);
-
   // Trigger Vector PDF Export
   const handleExportPdf = () => {
+    const W = paperDimensions.width || 1;
+    const H = paperDimensions.height || 1;
+    const normalizedPositions = {
+      top: { x: viewPositions.top.x / W, y: viewPositions.top.y / H },
+      iso: { x: viewPositions.iso.x / W, y: viewPositions.iso.y / H },
+      front: { x: viewPositions.front.x / W, y: viewPositions.front.y / H },
+      side: { x: viewPositions.side.x / W, y: viewPositions.side.y / H },
+    };
+
     exportToPdf(params, frontView, topView, sideView, isoView, {
       pageSize,
       orientation,
@@ -398,7 +800,13 @@ export default function TechnicalDrawingWorkspace({
       notes,
       scaleText: `1:${Math.round(1 / viewScale)}`,
       unit,
+      viewScale,
+      screenDimensions: paperDimensions,
+      rawViewPositions: viewPositions,
+      showDimensions,
+      isoAngle,
       viewTitles,
+      viewPositions: normalizedPositions,
     });
   };
 
@@ -680,6 +1088,16 @@ export default function TechnicalDrawingWorkspace({
             <span>Align Views</span>
           </button>
 
+          <button
+            type="button"
+            onClick={() => setSnappingEnabled((prev) => !prev)}
+            className={`${styles.toolSelectBtn} ${snappingEnabled ? styles.toolSelectBtnActive : ""}`}
+            title="Toggle Smart Vertex Snapping & Extending Guide Lines"
+          >
+            <MdCenterFocusStrong size={14} />
+            <span>{snappingEnabled ? "Snap (On)" : "Snap (Off)"}</span>
+          </button>
+
           {onOpenSettings && (
             <button
               type="button"
@@ -751,7 +1169,7 @@ export default function TechnicalDrawingWorkspace({
 
           {/* VIEWPORT 1: TOP PLAN VIEW (Doors Hidden) */}
           <div
-            className={styles.viewportContainer}
+            className={`${styles.viewportContainer} ${draggingView === "top" ? styles.viewportDragging : ""}`}
             style={{
               left: `${viewPositions.top.x}px`,
               top: `${viewPositions.top.y}px`,
@@ -791,7 +1209,7 @@ export default function TechnicalDrawingWorkspace({
 
           {/* VIEWPORT 2: 3D ISOMETRIC (Doors Visible & Handles Revealed, Dynamic Angle) */}
           <div
-            className={styles.viewportContainer}
+            className={`${styles.viewportContainer} ${draggingView === "iso" ? styles.viewportDragging : ""}`}
             style={{
               left: `${viewPositions.iso.x}px`,
               top: `${viewPositions.iso.y}px`,
@@ -831,7 +1249,7 @@ export default function TechnicalDrawingWorkspace({
 
           {/* VIEWPORT 3: FRONT ELEVATION (Doors Hidden) */}
           <div
-            className={styles.viewportContainer}
+            className={`${styles.viewportContainer} ${draggingView === "front" ? styles.viewportDragging : ""}`}
             style={{
               left: `${viewPositions.front.x}px`,
               top: `${viewPositions.front.y}px`,
@@ -871,7 +1289,7 @@ export default function TechnicalDrawingWorkspace({
 
           {/* VIEWPORT 4: SIDE / CROSS-SECTION (Doors Hidden) */}
           <div
-            className={styles.viewportContainer}
+            className={`${styles.viewportContainer} ${draggingView === "side" ? styles.viewportDragging : ""}`}
             style={{
               left: `${viewPositions.side.x}px`,
               top: `${viewPositions.side.y}px`,
@@ -961,6 +1379,167 @@ export default function TechnicalDrawingWorkspace({
               <span className={styles.titleLegendText}>{notes}</span>
             </div>
           </div>
+
+          {/* Extending Snapping Guide Lines & CAD Diamond Vertex Markers Overlay */}
+          {activeGuides.length > 0 && (
+            <svg
+              className={styles.snappingGuidesOverlay}
+              width={paperDimensions.width}
+              height={paperDimensions.height}
+              viewBox={`0 0 ${paperDimensions.width} ${paperDimensions.height}`}
+              role="presentation"
+            >
+              <defs>
+                <filter id="cadGlow" x="-30%" y="-30%" width="160%" height="160%">
+                  <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor="#0284c7" floodOpacity="0.85" />
+                </filter>
+              </defs>
+              {activeGuides.map((guide) => {
+                if (guide.type === "horizontal") {
+                  const y = Math.round(guide.pos);
+                  const minX = guide.markers.length > 0 ? Math.min(...guide.markers.map((m) => m.x)) : 60;
+                  const badgeX = Math.max(20, Math.min(paperDimensions.width - 280, minX - 10));
+                  const badgeY = y < 35 ? y + 8 : y - 20;
+                  const badgeW = guide.label.length * 6.6 + 20;
+
+                  return (
+                    <g key={guide.id} className={styles.snapGuideGroup}>
+                      {/* Ambient Glowing Halo Line */}
+                      <line
+                        x1={12}
+                        y1={y}
+                        x2={paperDimensions.width - 12}
+                        y2={y}
+                        stroke="#38bdf8"
+                        strokeWidth={5}
+                        strokeOpacity={0.35}
+                      />
+                      {/* High-Precision Dashed Guide Line Extending Across Paper */}
+                      <line
+                        x1={12}
+                        y1={y}
+                        x2={paperDimensions.width - 12}
+                        y2={y}
+                        stroke="#0284c7"
+                        strokeWidth={1.5}
+                        strokeDasharray="6 3.5"
+                      />
+
+                      {/* CAD Diamond Vertex Snap Markers */}
+                      {guide.markers.map((m, idx) => (
+                        <g key={idx} transform={`translate(${Math.round(m.x)}, ${y})`}>
+                          <polygon
+                            points="0,-7 7,0 0,7 -7,0"
+                            fill="#ffffff"
+                            stroke="#0284c7"
+                            strokeWidth={1.8}
+                            filter="url(#cadGlow)"
+                          />
+                          <circle cx={0} cy={0} r={2} fill="#0284c7" />
+                        </g>
+                      ))}
+
+                      {/* Alignment Information Badge */}
+                      <g transform={`translate(${badgeX}, ${badgeY})`}>
+                        <rect
+                          x={0}
+                          y={0}
+                          width={badgeW}
+                          height={18}
+                          rx={4}
+                          fill="#0f172a"
+                          stroke="#0284c7"
+                          strokeWidth={1.2}
+                          filter="drop-shadow(0 2px 6px rgba(0,0,0,0.5))"
+                        />
+                        <text
+                          x={10}
+                          y={12.5}
+                          fill="#38bdf8"
+                          fontSize={9.5}
+                          fontWeight={700}
+                          fontFamily="monospace"
+                        >
+                          {guide.label}
+                        </text>
+                      </g>
+                    </g>
+                  );
+                } else {
+                  // Vertical Guide Line Extending Across Paper
+                  const x = Math.round(guide.pos);
+                  const minY = guide.markers.length > 0 ? Math.min(...guide.markers.map((m) => m.y)) : 60;
+                  const badgeY = Math.max(22, Math.min(paperDimensions.height - 45, minY - 10));
+                  const badgeW = guide.label.length * 6.6 + 20;
+                  const badgeX = x > paperDimensions.width - 240 ? x - badgeW - 10 : x + 10;
+
+                  return (
+                    <g key={guide.id} className={styles.snapGuideGroup}>
+                      {/* Ambient Glowing Halo Line */}
+                      <line
+                        x1={x}
+                        y1={12}
+                        x2={x}
+                        y2={paperDimensions.height - 12}
+                        stroke="#38bdf8"
+                        strokeWidth={5}
+                        strokeOpacity={0.35}
+                      />
+                      {/* High-Precision Dashed Guide Line */}
+                      <line
+                        x1={x}
+                        y1={12}
+                        x2={x}
+                        y2={paperDimensions.height - 12}
+                        stroke="#0284c7"
+                        strokeWidth={1.5}
+                        strokeDasharray="6 3.5"
+                      />
+
+                      {/* CAD Diamond Vertex Snap Markers */}
+                      {guide.markers.map((m, idx) => (
+                        <g key={idx} transform={`translate(${x}, ${Math.round(m.y)})`}>
+                          <polygon
+                            points="0,-7 7,0 0,7 -7,0"
+                            fill="#ffffff"
+                            stroke="#0284c7"
+                            strokeWidth={1.8}
+                            filter="url(#cadGlow)"
+                          />
+                          <circle cx={0} cy={0} r={2} fill="#0284c7" />
+                        </g>
+                      ))}
+
+                      {/* Alignment Information Badge */}
+                      <g transform={`translate(${badgeX}, ${badgeY})`}>
+                        <rect
+                          x={0}
+                          y={0}
+                          width={badgeW}
+                          height={18}
+                          rx={4}
+                          fill="#0f172a"
+                          stroke="#0284c7"
+                          strokeWidth={1.2}
+                          filter="drop-shadow(0 2px 6px rgba(0,0,0,0.5))"
+                        />
+                        <text
+                          x={10}
+                          y={12.5}
+                          fill="#38bdf8"
+                          fontSize={9.5}
+                          fontWeight={700}
+                          fontFamily="monospace"
+                        >
+                          {guide.label}
+                        </text>
+                      </g>
+                    </g>
+                  );
+                }
+              })}
+            </svg>
+          )}
         </div>
       </div>
 

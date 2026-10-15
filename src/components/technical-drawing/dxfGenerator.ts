@@ -35,12 +35,30 @@ export function exportToDxf(
   lines.push("70", meta?.unit === "cm" ? "5" : "4"); // 4 = Millimeters, 5 = Centimeters
   lines.push("0", "ENDSEC");
 
-  // TABLES Section (Layers definition)
+  // TABLES Section (Linetypes and Layers definition)
   lines.push("0", "SECTION");
   lines.push("2", "TABLES");
+
+  // LTYPE Table (AutoCAD R12 standard linetypes)
+  lines.push("0", "TABLE");
+  lines.push("2", "LTYPE");
+  lines.push("70", "3");
+
+  // CONTINUOUS
+  lines.push("0", "LTYPE", "2", "CONTINUOUS", "70", "0", "3", "Solid line", "72", "65", "73", "0", "40", "0.0");
+
+  // HIDDEN
+  lines.push("0", "LTYPE", "2", "HIDDEN", "70", "0", "3", "Hidden __ __ __ __ __ __ __ __ __ __ __ __ __", "72", "65", "73", "2", "40", "9.525", "49", "6.35", "49", "-3.175");
+
+  // CENTER
+  lines.push("0", "LTYPE", "2", "CENTER", "70", "0", "3", "Center ____ _ ____ _ ____ _ ____ _ ____ _ ____", "72", "65", "73", "4", "40", "31.75", "49", "19.05", "49", "-6.35", "49", "3.175", "49", "-3.175");
+
+  lines.push("0", "ENDTAB");
+
+  // LAYER Table
   lines.push("0", "TABLE");
   lines.push("2", "LAYER");
-  lines.push("70", "6");
+  lines.push("70", "7");
 
   // Layer 0_OUTLINE (Thick Perimeter Contour - Color 7: White/Black)
   lines.push("0", "LAYER", "2", "0_OUTLINE", "70", "0", "62", "7", "6", "CONTINUOUS");
@@ -48,6 +66,8 @@ export function exportToDxf(
   lines.push("0", "LAYER", "2", "0_INTERIOR", "70", "0", "62", "8", "6", "CONTINUOUS");
   // Layer 0_HIDDEN (Hidden Carcass Edges - Color 9: Light Gray)
   lines.push("0", "LAYER", "2", "0_HIDDEN", "70", "0", "62", "9", "6", "HIDDEN");
+  // Layer 0_CENTER (Centerlines & Axes - Color 1: Red)
+  lines.push("0", "LAYER", "2", "0_CENTER", "70", "0", "62", "1", "6", "CENTER");
   // Layer 0_DIMS (Dimension Lines & Extension Witness Lines - Color 4: Cyan)
   lines.push("0", "LAYER", "2", "0_DIMS", "70", "0", "62", "4", "6", "CONTINUOUS");
   // Layer 0_TEXT (Annotations & Title Info - Color 3: Green)
@@ -115,6 +135,13 @@ export function exportToDxf(
   const frontOriginX = 200;
   const frontOriginY = 200;
 
+  const getLineLayer = (type?: string) => {
+    if (type === "outline") return "0_OUTLINE";
+    if (type === "hidden") return "0_HIDDEN";
+    if (type === "centerline") return "0_CENTER";
+    return "0_INTERIOR";
+  };
+
   // 1. FRONT ELEVATION
   addText("FRONT ELEVATION (DOORS HIDDEN)", frontOriginX, frontOriginY + front.height + 40, 30, "0_TEXT");
   front.rects.forEach(r => {
@@ -122,8 +149,7 @@ export function exportToDxf(
     addRect(frontOriginX + r.x, frontOriginY + r.y, r.width, r.height, layer);
   });
   front.lines.forEach(l => {
-    const layer = l.type === "outline" ? "0_OUTLINE" : l.type === "hidden" ? "0_HIDDEN" : "0_INTERIOR";
-    addLine(frontOriginX + l.x1, frontOriginY + l.y1, frontOriginX + l.x2, frontOriginY + l.y2, layer);
+    addLine(frontOriginX + l.x1, frontOriginY + l.y1, frontOriginX + l.x2, frontOriginY + l.y2, getLineLayer(l.type));
   });
   front.dimensions.forEach(d => addDimension(d, frontOriginX, frontOriginY));
 
@@ -136,8 +162,7 @@ export function exportToDxf(
     addRect(topOriginX + r.x, topOriginY + r.y, r.width, r.height, layer);
   });
   top.lines.forEach(l => {
-    const layer = l.type === "outline" ? "0_OUTLINE" : l.type === "hidden" ? "0_HIDDEN" : "0_INTERIOR";
-    addLine(topOriginX + l.x1, topOriginY + l.y1, topOriginX + l.x2, topOriginY + l.y2, layer);
+    addLine(topOriginX + l.x1, topOriginY + l.y1, topOriginX + l.x2, topOriginY + l.y2, getLineLayer(l.type));
   });
   top.dimensions.forEach(d => addDimension(d, topOriginX, topOriginY));
 
@@ -150,8 +175,7 @@ export function exportToDxf(
     addRect(sideOriginX + r.x, sideOriginY + r.y, r.width, r.height, layer);
   });
   side.lines.forEach(l => {
-    const layer = l.type === "outline" ? "0_OUTLINE" : l.type === "hidden" ? "0_HIDDEN" : "0_INTERIOR";
-    addLine(sideOriginX + l.x1, sideOriginY + l.y1, sideOriginX + l.x2, sideOriginY + l.y2, layer);
+    addLine(sideOriginX + l.x1, sideOriginY + l.y1, sideOriginX + l.x2, sideOriginY + l.y2, getLineLayer(l.type));
   });
   side.dimensions.forEach(d => addDimension(d, sideOriginX, sideOriginY));
 
@@ -160,8 +184,7 @@ export function exportToDxf(
   const isoOriginY = topOriginY;
   addText("ISOMETRIC PROJECTION (DOORS VISIBLE)", isoOriginX, isoOriginY + iso.height + 40, 30, "0_TEXT");
   iso.lines.forEach(l => {
-    const layer = l.type === "outline" ? "0_OUTLINE" : "0_INTERIOR";
-    addLine(isoOriginX + l.x1, isoOriginY + l.y1, isoOriginX + l.x2, isoOriginY + l.y2, layer);
+    addLine(isoOriginX + l.x1, isoOriginY + l.y1, isoOriginX + l.x2, isoOriginY + l.y2, getLineLayer(l.type));
   });
 
   // CAD Title Block border in Model Space

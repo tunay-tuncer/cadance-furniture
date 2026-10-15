@@ -10,6 +10,7 @@ import { subscribeToUserProject, ProjectItem } from "@/lib/firebase/projectServi
 import { addFurnitureToProject } from "@/lib/firebase/furnitureService";
 import { exportFurnitureModel, ExportFormat } from "@/lib/exporters/exportModel";
 import { FurnitureParams, KitchenCabinetUnit, WardrobeUnit, SelectedDivision } from "@/components/modeler/FurnitureMesh";
+import { calculateProductionMetrics } from "@/lib/production/productionCalculator";
 import ModelerControls from "@/components/modeler/ModelerControls";
 import ModelerToolbar from "@/components/modeler/ModelerToolbar";
 import CadActionToolbar from "@/components/modeler/CadActionToolbar";
@@ -75,6 +76,11 @@ const DEFAULT_WARDROBE_UNITS: WardrobeUnit[] = [
     hasClothesHangerRail: true,
     internalShelves: 1,
     hasInternalDivider: false,
+    partitionOffset: 0,
+    partitionSpan: "underTopShelf",
+    hangerZone: "left",
+    shelfOffsets: [],
+    slidingDoorActivePanel: "right",
     handleType: "edgePull",
     handleFinish: "black",
   },
@@ -229,9 +235,14 @@ export default function ModelerPage({ params }: PageProps) {
         if (div.type === "shelf") {
           const updated = units.map((u) => {
             if (u.id === div.unitId) {
+              const newOffsets = [...(u.shelfOffsets || [])];
+              if (div.index !== undefined && div.index < newOffsets.length) {
+                newOffsets.splice(div.index, 1);
+              }
               return {
                 ...u,
                 internalShelves: Math.max(0, (u.internalShelves ?? 0) - 1),
+                shelfOffsets: newOffsets,
               };
             }
             return u;
@@ -240,7 +251,7 @@ export default function ModelerPage({ params }: PageProps) {
         } else if (div.type === "partition") {
           const updated = units.map((u) => {
             if (u.id === div.unitId) {
-              return { ...u, hasInternalDivider: false };
+              return { ...u, hasInternalDivider: false, partitionOffset: 0 };
             }
             return u;
           });
@@ -407,60 +418,168 @@ export default function ModelerPage({ params }: PageProps) {
       if (!source) return prev;
 
       if (direction === "top") {
+        if (source.type === "corner-base") {
+          const newCornerWall: KitchenCabinetUnit = {
+            id: `corner-wall-${Date.now()}`,
+            name: `Corner Wall (90°)`,
+            type: "corner-wall",
+            orientation: source.orientation || "corner-right",
+            materialType: source.materialType || prev.materialType,
+            width: 600,
+            height: 720,
+            depth: 600,
+            cornerDepth: 350,
+            bottomOffset: 600,
+            doorType: "cornerDouble",
+            drawerCount: 0,
+            internalShelves: 2,
+            handleType: source.handleType,
+            handleFinish: source.handleFinish,
+          };
+          const run1WallIdx = list.findIndex((u) => u.type === "wall" && u.runAxis === "run1");
+          const updated = [...list];
+          if (run1WallIdx !== -1) {
+            updated.splice(run1WallIdx, 0, newCornerWall);
+          } else {
+            updated.push(newCornerWall);
+          }
+          return {
+            ...prev,
+            kitchenUnits: updated,
+            selectedUnitId: newCornerWall.id,
+            selectedUnitIds: [newCornerWall.id],
+          };
+        }
+
+        const cornerIdx = list.findIndex((u) => u.type === "corner-base");
+        const sourceIdx = list.findIndex((u) => u.id === sourceId);
+        const isOnRun1 = cornerIdx !== -1 && sourceIdx > cornerIdx;
+
         const newWall: KitchenCabinetUnit = {
           id: `wall-${Date.now()}`,
-          name: `Wall Unit (${source.width}mm)`,
+          name: `Wall Unit (${source.width}mm)${isOnRun1 ? " (Turned)" : ""}`,
           type: "wall",
+          runAxis: isOnRun1 ? "run1" : "run0",
           materialType: source.materialType || prev.materialType,
           width: source.width,
           height: 720,
           depth: 350,
+          bottomOffset: 600,
           doorType: source.width >= 800 ? "double" : "singleLeft",
           drawerCount: 0,
           internalShelves: 2,
           handleType: source.handleType,
           handleFinish: source.handleFinish,
         };
+
+        // Align position with the corresponding base cabinet in the same run
+        const baseUnitsInSameRun = list.filter((u) => {
+          if (u.type !== "base" && u.type !== "corner-base") return false;
+          const uIdx = list.indexOf(u);
+          const uIsOnRun1 = cornerIdx !== -1 && uIdx > cornerIdx;
+          return uIsOnRun1 === isOnRun1 && u.type === "base";
+        });
+        const sourceBasePosInRun = baseUnitsInSameRun.findIndex((u) => u.id === sourceId);
+        const wallUnitsInSameRun = list.filter((u) => (u.type === "wall" || u.type === "corner-wall") && (isOnRun1 ? u.runAxis === "run1" : u.runAxis !== "run1"));
+
+        const updated = [...list];
+        if (wallUnitsInSameRun.length > 0 && sourceBasePosInRun !== -1) {
+          const targetWall = wallUnitsInSameRun[sourceBasePosInRun];
+          if (targetWall) {
+            const targetIdx = updated.findIndex((u) => u.id === targetWall.id);
+            updated.splice(targetIdx, 0, newWall);
+          } else {
+            const lastWall = wallUnitsInSameRun[wallUnitsInSameRun.length - 1];
+            const lastIdx = updated.findIndex((u) => u.id === lastWall.id);
+            updated.splice(lastIdx + 1, 0, newWall);
+          }
+        } else {
+          updated.push(newWall);
+        }
+
         return {
           ...prev,
-          kitchenUnits: [...list, newWall],
+          kitchenUnits: updated,
           selectedUnitId: newWall.id,
           selectedUnitIds: [newWall.id],
         };
       } else {
+        const isWall = source.type === "wall" || source.type === "corner-wall";
+
         // Smart Paired Handing: In real-life cabinetry, adjacent single doors are handed in opposing pairs
         const adjacentDoorType = direction === "right"
           ? (source.doorType === "singleLeft" ? "singleRight" : "singleLeft")
           : (source.doorType === "singleRight" ? "singleLeft" : "singleRight");
 
-        const newBase: KitchenCabinetUnit = {
-          id: `base-${Date.now()}`,
-          name: `Base Cabinet ${list.filter((u) => u.type === "base" || u.type === "corner-base").length + 1}`,
-          type: "base",
-          orientation: "straight",
-          materialType: source.materialType || prev.materialType,
-          width: 600,
-          height: 720,
-          depth: 600,
-          doorType: adjacentDoorType,
-          drawerCount: 0,
-          internalShelves: 2,
-          handleType: source.handleType,
-          handleFinish: source.handleFinish,
-        };
         const idx = list.findIndex((u) => u.id === sourceId);
         const updated = [...list];
-        if (direction === "left") {
-          updated.splice(idx, 0, newBase);
+
+        if (isWall) {
+          const wallCount = list.filter((u) => u.type === "wall" || u.type === "corner-wall").length;
+          const resolvedRunAxis = source.type === "wall"
+            ? (source.runAxis || "run0")
+            : (direction === "right" ? "run1" : "run0");
+
+          const newWall: KitchenCabinetUnit = {
+            id: `wall-${Date.now()}`,
+            name: `Upper Wall Unit ${wallCount + 1}${resolvedRunAxis === "run1" ? " (Turned)" : ""}`,
+            type: "wall",
+            runAxis: resolvedRunAxis,
+            materialType: source.materialType || prev.materialType,
+            width: source.width || 600,
+            height: source.height || 720,
+            depth: source.depth || 350,
+            bottomOffset: source.bottomOffset ?? 600,
+            doorType: (source.width || 600) >= 800 ? "double" : adjacentDoorType,
+            drawerCount: 0,
+            internalShelves: source.internalShelves ?? 2,
+            handleType: source.handleType || "bar",
+            handleFinish: source.handleFinish || "black",
+          };
+
+          if (direction === "left") {
+            updated.splice(idx, 0, newWall);
+          } else {
+            updated.splice(idx + 1, 0, newWall);
+          }
+
+          return {
+            ...prev,
+            kitchenUnits: updated,
+            selectedUnitId: newWall.id,
+            selectedUnitIds: [newWall.id],
+          };
         } else {
-          updated.splice(idx + 1, 0, newBase);
+          const baseCount = list.filter((u) => u.type === "base" || u.type === "corner-base").length;
+          const newBase: KitchenCabinetUnit = {
+            id: `base-${Date.now()}`,
+            name: `Base Cabinet ${baseCount + 1}`,
+            type: "base",
+            orientation: "straight",
+            materialType: source.materialType || prev.materialType,
+            width: source.width || 600,
+            height: source.height || 720,
+            depth: source.depth || 600,
+            doorType: (source.width || 600) >= 800 ? "double" : adjacentDoorType,
+            drawerCount: 0,
+            internalShelves: source.internalShelves ?? 2,
+            handleType: source.handleType || "bar",
+            handleFinish: source.handleFinish || "black",
+          };
+
+          if (direction === "left") {
+            updated.splice(idx, 0, newBase);
+          } else {
+            updated.splice(idx + 1, 0, newBase);
+          }
+
+          return {
+            ...prev,
+            kitchenUnits: updated,
+            selectedUnitId: newBase.id,
+            selectedUnitIds: [newBase.id],
+          };
         }
-        return {
-          ...prev,
-          kitchenUnits: updated,
-          selectedUnitId: newBase.id,
-          selectedUnitIds: [newBase.id],
-        };
       }
     });
   };
@@ -484,31 +603,7 @@ export default function ModelerPage({ params }: PageProps) {
     setSaveSuccess(false);
 
     try {
-      const areaM2 = Number(
-        (
-          ((furnitureParams.width * furnitureParams.depth * 2 +
-            furnitureParams.width * furnitureParams.height * 2 +
-            furnitureParams.depth * furnitureParams.height * 2) /
-            1_000_000) *
-          0.45
-        ).toFixed(2)
-      );
-
-      const panelCount =
-        furnitureParams.category === "Shelf"
-          ? Math.max(2, Math.floor(furnitureParams.height / 350)) + 3
-          : furnitureParams.category === "Cabinet"
-          ? 8
-          : 5;
-
-      const estWeight = Number(
-        (
-          ((furnitureParams.width * furnitureParams.depth * furnitureParams.height) /
-            1_000_000_000) *
-          650 *
-          0.06
-        ).toFixed(1)
-      );
+      const metrics = calculateProductionMetrics(furnitureParams);
 
       await addFurnitureToProject(user.uid, projectId, {
         projectId,
@@ -517,11 +612,12 @@ export default function ModelerPage({ params }: PageProps) {
         width: furnitureParams.width,
         height: furnitureParams.height,
         depth: furnitureParams.depth,
-        material: `${furnitureParams.materialType.toUpperCase()} (18-25mm)`,
-        panelCount,
-        surfaceArea: areaM2,
-        estimatedWeight: estWeight,
+        material: `${furnitureParams.materialType.toUpperCase()} (${furnitureParams.boardThickness || 18}mm)`,
+        panelCount: metrics.panelCount,
+        surfaceArea: metrics.totalSurfaceArea,
+        estimatedWeight: metrics.estimatedWeight,
         estimatedCost: 0,
+        params: furnitureParams,
       });
 
       setSaveSuccess(true);

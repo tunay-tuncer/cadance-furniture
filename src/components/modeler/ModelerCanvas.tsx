@@ -8,6 +8,8 @@ import {
   GizmoHelper,
   PerspectiveCamera,
   OrthographicCamera,
+  Environment,
+  Lightformer,
 } from "@react-three/drei";
 import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
@@ -377,6 +379,18 @@ export default function ModelerCanvas({
             intensity={0.4}
             color="#93c5fd"
           />
+
+          {/* Zero-latency procedural studio environment for realistic PBR reflections, chrome & mirror */}
+          <Environment resolution={256}>
+            <group rotation={[-Math.PI / 4, -0.6, 0]}>
+              {/* Overhead softbox */}
+              <Lightformer form="rect" intensity={1.8} position={[0, 5, -2]} scale={[10, 5, 1]} target={[0, 0, 0]} />
+              {/* Warm key light */}
+              <Lightformer form="rect" intensity={2.2} color="#fff7ed" position={[5, 2, 4]} scale={[4, 6, 1]} target={[0, 0, 0]} />
+              {/* Cool rim light */}
+              <Lightformer form="rect" intensity={1.4} color="#e0f2fe" position={[-5, 2, -3]} scale={[6, 4, 1]} target={[0, 0, 0]} />
+            </group>
+          </Environment>
 
           {/* 
             FURNITURE TOUCHING GRID AT Y = 0 BY DEFAULT:

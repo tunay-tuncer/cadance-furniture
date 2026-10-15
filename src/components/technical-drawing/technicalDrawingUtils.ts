@@ -142,10 +142,12 @@ export function getKitchenData(params: FurnitureParams): KitchenDrawingData {
       ];
 
   const baseUnits = units.filter((u) => u.type === "base" || u.type === "corner-base");
-  const wallUnits = units.filter((u) => u.type === "wall");
+  const wallUnits = units.filter((u) => u.type === "wall" || u.type === "corner-wall");
   const plinthH = params.baseType === "floating" ? 0 : (params.plinthHeight ?? 80);
   const countertopThick = params.tableTopThickness || 30;
-  const splashH = 550; // Standard 550mm backsplash clearance gap
+  const splashH = wallUnits.length > 0 && wallUnits[0].bottomOffset !== undefined
+    ? wallUnits[0].bottomOffset
+    : 600; // Standard 600mm backsplash clearance gap (Turkish standard tezgah arası)
 
   const totalBaseW = baseUnits.reduce((acc, u) => acc + u.width, 0);
   const totalWallW = wallUnits.reduce((acc, u) => acc + u.width, 0);
@@ -309,15 +311,59 @@ export function generateFrontElevation(params: FurnitureParams, unit: "mm" | "cm
       if (u.drawerCount > 0) {
         const dCount = u.drawerCount;
         const dH = (u.height - t * 2) / dCount;
+        const curDoorStyle = u.doorStyle || params.doorStyle;
         for (let di = 0; di < dCount; di++) {
+          const dx = curX + t + 2;
+          const dy = uY + t + di * dH + 2;
+          const dw = u.width - t * 2 - 4;
+          const dh = dH - 4;
           rects.push({
             id: `base-drawer-${uIdx}-${di}`,
-            x: curX + t + 2,
-            y: uY + t + di * dH + 2,
-            width: u.width - t * 2 - 4,
-            height: dH - 4,
+            x: dx,
+            y: dy,
+            width: dw,
+            height: dh,
             type: "drawer",
           });
+          if (curDoorStyle === "slimShaker" || curDoorStyle === "framedGlass") {
+            const inset = Math.min(22, dw * 0.25, dh * 0.25);
+            rects.push({
+              id: `base-drawer-frame-${uIdx}-${di}`,
+              x: dx + inset,
+              y: dy + inset,
+              width: dw - inset * 2,
+              height: dh - inset * 2,
+              type: "interior",
+            });
+          } else if (curDoorStyle === "shaker") {
+            const inset = Math.min(60, dw * 0.3, dh * 0.3);
+            rects.push({
+              id: `base-drawer-frame-${uIdx}-${di}`,
+              x: dx + inset,
+              y: dy + inset,
+              width: dw - inset * 2,
+              height: dh - inset * 2,
+              type: "interior",
+            });
+          } else if (curDoorStyle === "fluted") {
+            const border = Math.min(25, dw * 0.2);
+            const innerW = dw - border * 2;
+            if (innerW > 25) {
+              const numLines = Math.min(6, Math.max(3, Math.floor(innerW / 35)));
+              const step = innerW / (numLines + 1);
+              for (let li = 1; li <= numLines; li++) {
+                const lx = dx + border + li * step;
+                lines.push({
+                  id: `base-drawer-flute-${uIdx}-${di}-${li}`,
+                  x1: lx,
+                  y1: dy + 4,
+                  x2: lx,
+                  y2: dy + dh - 4,
+                  type: "interior",
+                });
+              }
+            }
+          }
         }
       } else if (u.internalShelves > 0) {
         const sCount = u.internalShelves;
@@ -367,9 +413,9 @@ export function generateFrontElevation(params: FurnitureParams, unit: "mm" | "cm
 
     // Wall Cabinets
     if (kd.wallUnits.length > 0) {
-      const wuY = ctY + kd.countertopThick + kd.splashH;
       let curWallX = 0;
       kd.wallUnits.forEach((wu, wuIdx) => {
+        const wuY = ctY + kd.countertopThick + (wu.bottomOffset !== undefined ? wu.bottomOffset : kd.splashH);
         rects.push({
           id: `wall-carcass-${wuIdx}`,
           x: curWallX,
@@ -530,75 +576,259 @@ export function generateFrontElevation(params: FurnitureParams, unit: "mm" | "cm
       rects.push({ id: `ward-bottom-${idx}`, x: curX + t, y: uY, width: u.width - t * 2, height: t, type: "interior" });
       rects.push({ id: `ward-top-${idx}`, x: curX + t, y: uY + u.height - t, width: u.width - t * 2, height: t, type: "interior" });
 
-      // Internal Vertical Divider
+      // 1. Drawers (for both externalBottom and internal)
+      let drawerSpaceH = 0;
+      const isConcealed = u.drawerType === "internal";
+      if (u.hasDrawers && (u.drawerCount || 0) > 0) {
+        const dCount = u.drawerCount || 2;
+        const dH = u.drawerHeight || 180;
+        drawerSpaceH = dH * dCount;
+
+        if (isConcealed) {
+          // Side spacer strips (takoz) 25mm each
+          const spacerW = 25;
+          rects.push({
+            id: `ward-drawer-spacer-l-${idx}`,
+            x: curX + t,
+            y: uY + t,
+            width: spacerW,
+            height: drawerSpaceH,
+            type: "interior",
+          });
+          rects.push({
+            id: `ward-drawer-spacer-r-${idx}`,
+            x: curX + u.width - t - spacerW,
+            y: uY + t,
+            width: spacerW,
+            height: drawerSpaceH,
+            type: "interior",
+          });
+
+          for (let di = 0; di < dCount; di++) {
+            rects.push({
+              id: `ward-drawer-${idx}-${di}`,
+              x: curX + t + spacerW + 2,
+              y: uY + t + di * dH + 2,
+              width: u.width - t * 2 - spacerW * 2 - 4,
+              height: dH - 4,
+              type: "drawer",
+            });
+          }
+        } else {
+          const curDoorStyle = u.doorStyle || params.doorStyle;
+          for (let di = 0; di < dCount; di++) {
+            const dx = curX + t + 2;
+            const dy = uY + t + di * dH + 2;
+            const dw = u.width - t * 2 - 4;
+            const dh = dH - 4;
+            rects.push({
+              id: `ward-drawer-${idx}-${di}`,
+              x: dx,
+              y: dy,
+              width: dw,
+              height: dh,
+              type: "drawer",
+            });
+            if (curDoorStyle === "slimShaker" || curDoorStyle === "framedGlass") {
+              const inset = Math.min(22, dw * 0.25, dh * 0.25);
+              rects.push({
+                id: `ward-drawer-frame-${idx}-${di}`,
+                x: dx + inset,
+                y: dy + inset,
+                width: dw - inset * 2,
+                height: dh - inset * 2,
+                type: "interior",
+              });
+            } else if (curDoorStyle === "shaker") {
+              const inset = Math.min(60, dw * 0.3, dh * 0.3);
+              rects.push({
+                id: `ward-drawer-frame-${idx}-${di}`,
+                x: dx + inset,
+                y: dy + inset,
+                width: dw - inset * 2,
+                height: dh - inset * 2,
+                type: "interior",
+              });
+            } else if (curDoorStyle === "fluted") {
+              const border = Math.min(25, dw * 0.2);
+              const innerW = dw - border * 2;
+              if (innerW > 25) {
+                const numLines = Math.min(6, Math.max(3, Math.floor(innerW / 35)));
+                const step = innerW / (numLines + 1);
+                for (let li = 1; li <= numLines; li++) {
+                  const lx = dx + border + li * step;
+                  lines.push({
+                    id: `ward-drawer-flute-${idx}-${di}-${li}`,
+                    x1: lx,
+                    y1: dy + 4,
+                    x2: lx,
+                    y2: dy + dh - 4,
+                    type: "interior",
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        // Full-width horizontal structural divider board (sabit tabla)
+        rects.push({
+          id: `ward-drawer-shelf-${idx}`,
+          x: curX + t,
+          y: uY + t + drawerSpaceH,
+          width: u.width - t * 2,
+          height: t,
+          type: "interior",
+        });
+      }
+
+      // 2. Vertical Partition & Sub-bays
+      const partBottomY = uY + t + drawerSpaceH + (drawerSpaceH > 0 ? t : 0);
+      const innerW = u.width - t * 2;
+      const minBay = 250;
+      const rawOffset = u.partitionOffset || 0;
+      const maxOffset = Math.max(0, (innerW - t) / 2 - minBay);
+      const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, rawOffset));
+      const midX = curX + t + (innerW - t) / 2 + clampedOffset;
+      const rightBayW = (innerW - t) / 2 - clampedOffset;
+
+      const topLuggageY = uY + u.height - t - 350;
+
       if (u.hasInternalDivider) {
-        const midX = curX + u.width / 2 - t / 2;
+        const partTopY = (u.partitionSpan === "underTopShelf") ? topLuggageY : (uY + u.height - t);
+
         rects.push({
           id: `ward-divider-${idx}`,
           x: midX,
-          y: uY + t,
+          y: partBottomY,
           width: t,
-          height: u.height - t * 2,
+          height: Math.max(50, partTopY - partBottomY),
           type: "interior",
         });
-      }
 
-      // External Drawers at bottom
-      let drawerSpaceH = 0;
-      if (u.hasDrawers && (u.drawerCount || 0) > 0) {
-        const dCount = u.drawerCount || 2;
-        drawerSpaceH = (u.drawerHeight || 180) * dCount;
-        for (let di = 0; di < dCount; di++) {
+        if (u.partitionSpan === "underTopShelf") {
+          // Top luggage shelf
           rects.push({
-            id: `ward-drawer-${idx}-${di}`,
-            x: curX + t + 2,
-            y: uY + t + di * (u.drawerHeight || 180) + 2,
-            width: u.width - t * 2 - 4,
-            height: (u.drawerHeight || 180) - 4,
-            type: "drawer",
-          });
-        }
-      }
-
-      // Clothes Hanger Rail
-      if (u.hasClothesHangerRail) {
-        const railY = uY + u.height - t - 90;
-        lines.push({
-          id: `ward-rail-${idx}`,
-          x1: curX + t,
-          y1: railY,
-          x2: curX + u.width - t,
-          y2: railY,
-          type: "interior",
-        });
-        // Centerline
-        lines.push({
-          id: `ward-rail-center-${idx}`,
-          x1: curX + t,
-          y1: railY + 6,
-          x2: curX + u.width - t,
-          y2: railY + 6,
-          type: "centerline",
-        });
-      }
-
-      // Internal Shelves
-      if (u.internalShelves > 0) {
-        const shelfSpan = u.hasInternalDivider ? (u.width - t * 3) / 2 : u.width - t * 2;
-        const startY = uY + t + drawerSpaceH;
-        const availH = u.height - t * 2 - drawerSpaceH - (u.hasClothesHangerRail ? 160 : 0);
-        const sGap = (availH - u.internalShelves * t) / (u.internalShelves + 1);
-
-        for (let si = 0; si < u.internalShelves; si++) {
-          const sy = startY + (si + 1) * sGap + si * t;
-          rects.push({
-            id: `ward-shelf-${idx}-${si}`,
+            id: `ward-top-luggage-${idx}`,
             x: curX + t,
-            y: sy,
-            width: shelfSpan,
+            y: topLuggageY,
+            width: innerW,
             height: t,
             type: "interior",
           });
+        }
+
+        // Clothes rail in left sub-bay
+        if (u.hasClothesHangerRail) {
+          const railY = (u.partitionSpan === "underTopShelf" ? topLuggageY : (uY + u.height - t)) - 80;
+          lines.push({
+            id: `ward-rail-${idx}`,
+            x1: curX + t,
+            y1: railY,
+            x2: midX,
+            y2: railY,
+            type: "interior",
+          });
+          lines.push({
+            id: `ward-rail-center-${idx}`,
+            x1: curX + t,
+            y1: railY + 6,
+            x2: midX,
+            y2: railY + 6,
+            type: "centerline",
+          });
+        }
+
+        // Shelves in right sub-bay
+        if ((u.internalShelves || 0) > 0) {
+          const shelfTopLim = (u.partitionSpan === "underTopShelf") ? topLuggageY : (uY + u.height - t);
+          const rightAvailH = shelfTopLim - partBottomY;
+          const sGap = (rightAvailH - u.internalShelves * t) / (u.internalShelves + 1);
+
+          for (let si = 0; si < u.internalShelves; si++) {
+            const shelfOff = u.shelfOffsets?.[si] || 0;
+            const sy = partBottomY + (si + 1) * sGap + si * t + shelfOff;
+            rects.push({
+              id: `ward-shelf-${idx}-${si}`,
+              x: midX + t,
+              y: sy,
+              width: rightBayW,
+              height: t,
+              type: "interior",
+            });
+          }
+        }
+      } else {
+        // No vertical partition
+        if (u.hasClothesHangerRail) {
+          let railY = uY + u.height - t - 90;
+          if ((u.internalShelves || 0) >= 1) {
+            // Top luggage shelf above rod
+            const lugY = uY + u.height - t - 320;
+            rects.push({
+              id: `ward-top-luggage-${idx}`,
+              x: curX + t,
+              y: lugY,
+              width: innerW,
+              height: t,
+              type: "interior",
+            });
+            railY = lugY - 70;
+
+            // Extra shelves below hanging clearance
+            const extraCount = u.internalShelves - 1;
+            if (extraCount > 0) {
+              const lowerTopLim = Math.max(partBottomY, railY - 1050);
+              const lowerAvailH = lowerTopLim - partBottomY;
+              const sGap = lowerAvailH > 100 ? (lowerAvailH - extraCount * t) / (extraCount + 1) : 0;
+              for (let si = 0; si < extraCount; si++) {
+                const shelfOff = u.shelfOffsets?.[si + 1] || 0;
+                const sy = partBottomY + (si + 1) * sGap + si * t + shelfOff;
+                rects.push({
+                  id: `ward-shelf-${idx}-${si + 1}`,
+                  x: curX + t,
+                  y: sy,
+                  width: innerW,
+                  height: t,
+                  type: "interior",
+                });
+              }
+            }
+          }
+
+          lines.push({
+            id: `ward-rail-${idx}`,
+            x1: curX + t,
+            y1: railY,
+            x2: curX + u.width - t,
+            y2: railY,
+            type: "interior",
+          });
+          lines.push({
+            id: `ward-rail-center-${idx}`,
+            x1: curX + t,
+            y1: railY + 6,
+            x2: curX + u.width - t,
+            y2: railY + 6,
+            type: "centerline",
+          });
+        } else if ((u.internalShelves || 0) > 0) {
+          // Standard full-width shelves
+          const availH = (uY + u.height - t) - partBottomY;
+          const sGap = (availH - u.internalShelves * t) / (u.internalShelves + 1);
+
+          for (let si = 0; si < u.internalShelves; si++) {
+            const shelfOff = u.shelfOffsets?.[si] || 0;
+            const sy = partBottomY + (si + 1) * sGap + si * t + shelfOff;
+            rects.push({
+              id: `ward-shelf-${idx}-${si}`,
+              x: curX + t,
+              y: sy,
+              width: innerW,
+              height: t,
+              type: "interior",
+            });
+          }
         }
       }
 
@@ -977,8 +1207,56 @@ export function generatePlanTopView(params: FurnitureParams, unit: "mm" | "cm" =
       rects.push({ id: `plan-ward-rs-${idx}`, x: curX + u.width - t, y: 0, width: t, height: uD, type: "interior" });
       lines.push({ id: `plan-ward-back-${idx}`, x1: curX + t, y1: 18, x2: curX + u.width - t, y2: 18, type: "interior" });
 
+      const isSliding = u.doorType === "sliding";
+      const setback = isSliding ? 80 : 0;
+      const partD = uD - 18 - setback;
+
       if (u.hasInternalDivider) {
-        rects.push({ id: `plan-ward-div-${idx}`, x: curX + u.width / 2 - t / 2, y: 18, width: t, height: uD - 18, type: "interior" });
+        const innerW = u.width - t * 2;
+        const minBay = 250;
+        const rawOffset = u.partitionOffset || 0;
+        const maxOffset = Math.max(0, (innerW - t) / 2 - minBay);
+        const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, rawOffset));
+        const divX = curX + t + (innerW - t) / 2 + clampedOffset;
+
+        rects.push({
+          id: `plan-ward-div-${idx}`,
+          x: divX,
+          y: 18,
+          width: t,
+          height: partD,
+          type: "interior",
+        });
+      }
+
+      if (isSliding) {
+        // Dual sliding door tracks & panels in plan view
+        const trackY = uD - 70;
+        lines.push({
+          id: `plan-ward-track-${idx}`,
+          x1: curX + t,
+          y1: trackY,
+          x2: curX + u.width - t,
+          y2: trackY,
+          type: "interior",
+        });
+        const leafW = (u.width - t * 2) / 2 + 18;
+        rects.push({
+          id: `plan-ward-leaf-rear-${idx}`,
+          x: curX + t,
+          y: uD - 55,
+          width: leafW,
+          height: 18,
+          type: "outline",
+        });
+        rects.push({
+          id: `plan-ward-leaf-front-${idx}`,
+          x: curX + u.width - t - leafW,
+          y: uD - 22,
+          width: leafW,
+          height: 18,
+          type: "outline",
+        });
       }
 
       dimensions.push({
@@ -1132,38 +1410,38 @@ export function generateSideSectionView(params: FurnitureParams, unit: "mm" | "c
       height: t,
       type: "interior",
     });
-    // Top Stretchers
+    // Top Stretchers (80mm deep Turkish standard ön ve arka üst kayıt)
     rects.push({
       id: "side-base-top-back",
       x: 0,
       y: kd.plinthH + kd.maxBaseH - t,
-      width: 70,
+      width: 80,
       height: t,
       type: "interior",
     });
     rects.push({
       id: "side-base-top-front",
-      x: kd.baseDepth - 70,
+      x: kd.baseDepth - 80,
       y: kd.plinthH + kd.maxBaseH - t,
-      width: 70,
+      width: 80,
       height: t,
       type: "interior",
     });
-    // Back board (recessed 20mm)
+    // Back board (slotted channel inset 18mm, 8mm thick)
     rects.push({
       id: "side-base-back",
-      x: 20,
+      x: 18,
       y: kd.plinthH + t,
       width: 8,
       height: kd.maxBaseH - t * 2,
       type: "interior",
     });
-    // Internal shelf
+    // Internal shelf (fits between recessed back panel and front setback)
     rects.push({
       id: "side-base-shelf",
-      x: 28,
+      x: 26,
       y: kd.plinthH + kd.maxBaseH / 2,
-      width: kd.baseDepth - 28 - 15,
+      width: kd.baseDepth - 45,
       height: t,
       type: "interior",
     });
@@ -1187,7 +1465,7 @@ export function generateSideSectionView(params: FurnitureParams, unit: "mm" | "c
       type: "outline",
     });
 
-    // 5. Backsplash Wall Gap (Height: 550mm)
+    // 5. Backsplash Wall Gap (Height: 600mm)
     lines.push({
       id: "side-splash-line",
       x1: 0,
@@ -1226,10 +1504,10 @@ export function generateSideSectionView(params: FurnitureParams, unit: "mm" | "c
         height: t,
         type: "interior",
       });
-      // Wall Back board
+      // Wall Back board (slotted channel inset 18mm, 8mm thick)
       rects.push({
         id: "side-wall-back",
-        x: 15,
+        x: 18,
         y: wallY + t,
         width: 8,
         height: kd.maxWallH - t * 2,
@@ -1242,9 +1520,9 @@ export function generateSideSectionView(params: FurnitureParams, unit: "mm" | "c
         for (let si = 1; si <= sCount; si++) {
           rects.push({
             id: `side-wall-shelf-${si}`,
-            x: 23,
+            x: 26,
             y: wallY + t + si * spacing - t / 2,
-            width: kd.wallDepth - 23 - 15,
+            width: kd.wallDepth - 45,
             height: t,
             type: "interior",
           });
@@ -1312,7 +1590,7 @@ export function generateSideSectionView(params: FurnitureParams, unit: "mm" | "c
       orientation: "vertical",
     });
 
-    // Backsplash Gap dimension (550mm)
+    // Backsplash Gap dimension (600mm)
     if (kd.wallUnits.length > 0) {
       dimensions.push({
         id: "side-dim-splash-h",
@@ -1377,7 +1655,7 @@ export function generateSideSectionView(params: FurnitureParams, unit: "mm" | "c
       rects.push({ id: "side-ward-plinth", x: 0, y: 0, width: D - 40, height: plinthH, type: "outline" });
     }
 
-    rects.push({ id: "side-ward-back", x: 18, y: plinthH + t, width: t, height: H - plinthH - t * 2, type: "interior" });
+    rects.push({ id: "side-ward-back", x: 18, y: plinthH + t, width: 8, height: H - plinthH - t * 2, type: "interior" });
     rects.push({ id: "side-ward-top", x: 0, y: H - t, width: D, height: t, type: "interior" });
     rects.push({ id: "side-ward-bot", x: 0, y: plinthH, width: D, height: t, type: "interior" });
 
@@ -1624,6 +1902,112 @@ export function generateIsometricView(
     addSegment(v001, v011, edgeType);
   };
 
+  const addDoorFaceFeatures = (
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    z: number,
+    doorStyle: "slab" | "slimShaker" | "shaker" | "fluted" | "framedGlass" | undefined
+  ) => {
+    if (!doorStyle || doorStyle === "slab") return;
+    const w = x2 - x1;
+    const h = y2 - y1;
+    if (w < 40 || h < 40) return;
+
+    if (doorStyle === "slimShaker" || doorStyle === "framedGlass") {
+      // 22mm perimeter frame inset
+      const inset = Math.min(22, w * 0.25, h * 0.25);
+      const p1 = project3d(x1 + inset, y1 + inset, z);
+      const p2 = project3d(x2 - inset, y1 + inset, z);
+      const p3 = project3d(x2 - inset, y2 - inset, z);
+      const p4 = project3d(x1 + inset, y2 - inset, z);
+      addSegment(p1, p2, "interior");
+      addSegment(p2, p3, "interior");
+      addSegment(p3, p4, "interior");
+      addSegment(p4, p1, "interior");
+    } else if (doorStyle === "shaker") {
+      // 60mm classic shaker perimeter frame inset
+      const inset = Math.min(60, w * 0.3, h * 0.3);
+      const p1 = project3d(x1 + inset, y1 + inset, z);
+      const p2 = project3d(x2 - inset, y1 + inset, z);
+      const p3 = project3d(x2 - inset, y2 - inset, z);
+      const p4 = project3d(x1 + inset, y2 - inset, z);
+      addSegment(p1, p2, "interior");
+      addSegment(p2, p3, "interior");
+      addSegment(p3, p4, "interior");
+      addSegment(p4, p1, "interior");
+    } else if (doorStyle === "fluted") {
+      // 4-5 subtle vertical lines inside door panel
+      const border = Math.min(30, w * 0.2);
+      const innerW = w - border * 2;
+      if (innerW > 30) {
+        const numLines = Math.min(7, Math.max(4, Math.floor(innerW / 35)));
+        const step = innerW / (numLines + 1);
+        for (let i = 1; i <= numLines; i++) {
+          const lx = x1 + border + i * step;
+          const pBot = project3d(lx, y1 + border, z);
+          const pTop = project3d(lx, y2 - border, z);
+          addSegment(pBot, pTop, "interior");
+        }
+      }
+    }
+  };
+
+  const drawHandle3d = (
+    hx: number,
+    hy: number,
+    z: number,
+    type: FurnitureParams["handleType"] = "bar",
+    orientation: "vertical" | "horizontal" = "vertical",
+    side: "left" | "right" | "center" = "center",
+    customLength?: number
+  ) => {
+    if (type === "hidden") return;
+
+    if (type === "knob") {
+      const pCenter = project3d(hx, hy, z + 8);
+      const pBase = project3d(hx, hy, z);
+      addSegment(pBase, pCenter, "interior");
+      const d = 5;
+      addSegment(project3d(hx - d, hy, z + 8), project3d(hx + d, hy, z + 8), "outline");
+      addSegment(project3d(hx, hy - d, z + 8), project3d(hx, hy + d, z + 8), "outline");
+      return;
+    }
+
+    if (type === "halfMoon") {
+      const r = 22;
+      const arcPts = 6;
+      const angleStart = side === "left" ? Math.PI / 2 : -Math.PI / 2;
+      const angleEnd = side === "left" ? (3 * Math.PI) / 2 : Math.PI / 2;
+      let prevPt = project3d(hx, hy - r, z + 4);
+      for (let i = 1; i <= arcPts; i++) {
+        const theta = angleStart + (i / arcPts) * (angleEnd - angleStart);
+        const curPt = project3d(hx + Math.cos(theta) * r, hy + Math.sin(theta) * r, z + 4);
+        addSegment(prevPt, curPt, "outline");
+        prevPt = curPt;
+      }
+      addSegment(project3d(hx, hy - r, z + 4), project3d(hx, hy + r, z + 4), "outline");
+      return;
+    }
+
+    const halfLen = customLength ? customLength / 2 : (type === "slimLine" ? 45 : 30);
+    const standoff = 8;
+    if (orientation === "horizontal") {
+      const p1 = project3d(hx - halfLen, hy, z + standoff);
+      const p2 = project3d(hx + halfLen, hy, z + standoff);
+      addSegment(p1, p2, "outline");
+      addSegment(project3d(hx - halfLen * 0.7, hy, z + standoff), project3d(hx - halfLen * 0.7, hy, z), "interior");
+      addSegment(project3d(hx + halfLen * 0.7, hy, z + standoff), project3d(hx + halfLen * 0.7, hy, z), "interior");
+    } else {
+      const p1 = project3d(hx, hy - halfLen, z + standoff);
+      const p2 = project3d(hx, hy + halfLen, z + standoff);
+      addSegment(p1, p2, "outline");
+      addSegment(project3d(hx, hy - halfLen * 0.7, z + standoff), project3d(hx, hy - halfLen * 0.7, z), "interior");
+      addSegment(project3d(hx, hy + halfLen * 0.7, z + standoff), project3d(hx, hy + halfLen * 0.7, z), "interior");
+    }
+  };
+
   // Build 3D Furniture details based on category
   const plinthH = params.baseType === "floating" ? 0 : (params.plinthHeight || 80);
 
@@ -1654,58 +2038,49 @@ export function generateIsometricView(
       if (u.drawerCount > 0) {
         const dCount = u.drawerCount;
         const dH = (uH - t) / dCount;
+        const curDoorStyle = u.doorStyle || params.doorStyle;
+        const curHandleType = u.handleType || params.handleType || "bar";
         for (let di = 0; di < dCount; di++) {
           const dy = uY + di * dH + 2;
           const dh = dH - 4;
           // Drawer front face box
           addBox3d(curX + 2, dy, uD, curX + u.width - 2, dy + dh, uD + 18, "outline");
-          // Drawer bar handle (horizontal)
+          addDoorFaceFeatures(curX + 2, dy, curX + u.width - 2, dy + dh, uD + 18, curDoorStyle);
+          // Drawer handle (horizontal)
           const midY = dy + dh / 2;
           const midX = curX + u.width / 2;
-          const hP1 = project3d(midX - 35, midY, uD + 26);
-          const hP2 = project3d(midX + 35, midY, uD + 26);
-          addSegment(hP1, hP2, "outline");
-          addSegment(hP1, project3d(midX - 35, midY, uD + 18), "interior");
-          addSegment(hP2, project3d(midX + 35, midY, uD + 18), "interior");
+          drawHandle3d(midX, midY, uD + 18, curHandleType, "horizontal", "center", u.width > 700 ? 110 : 70);
         }
       } else if (u.doorType === "singleLeft") {
         // Single Left door (hinged left, handle right)
+        const curDoorStyle = u.doorStyle || params.doorStyle;
+        const curHandleType = u.handleType || params.handleType || "bar";
         addBox3d(curX + 2, uY + 2, uD, curX + u.width - 2, uY + uH - 2, uD + 18, "outline");
+        addDoorFaceFeatures(curX + 2, uY + 2, curX + u.width - 2, uY + uH - 2, uD + 18, curDoorStyle);
         const hX = curX + u.width - 35;
         const hY = uY + uH - 60;
-        const hP1 = project3d(hX, hY - 30, uD + 26);
-        const hP2 = project3d(hX, hY + 30, uD + 26);
-        addSegment(hP1, hP2, "outline");
-        addSegment(hP1, project3d(hX, hY - 30, uD + 18), "interior");
-        addSegment(hP2, project3d(hX, hY + 30, uD + 18), "interior");
+        drawHandle3d(hX, hY, uD + 18, curHandleType, "vertical", "right");
       } else if (u.doorType === "singleRight") {
         // Single Right door (hinged right, handle left)
+        const curDoorStyle = u.doorStyle || params.doorStyle;
+        const curHandleType = u.handleType || params.handleType || "bar";
         addBox3d(curX + 2, uY + 2, uD, curX + u.width - 2, uY + uH - 2, uD + 18, "outline");
+        addDoorFaceFeatures(curX + 2, uY + 2, curX + u.width - 2, uY + uH - 2, uD + 18, curDoorStyle);
         const hX = curX + 35;
         const hY = uY + uH - 60;
-        const hP1 = project3d(hX, hY - 30, uD + 26);
-        const hP2 = project3d(hX, hY + 30, uD + 26);
-        addSegment(hP1, hP2, "outline");
-        addSegment(hP1, project3d(hX, hY - 30, uD + 18), "interior");
-        addSegment(hP2, project3d(hX, hY + 30, uD + 18), "interior");
-      } else if (u.doorType === "double") {
-        // Double doors
+        drawHandle3d(hX, hY, uD + 18, curHandleType, "vertical", "left");
+      } else if (u.doorType === "double" || u.doorType === "cornerDouble") {
+        // Double doors / Corner double doors
+        const curDoorStyle = u.doorStyle || params.doorStyle;
+        const curHandleType = u.handleType || params.handleType || "bar";
         const midX = curX + u.width / 2;
         addBox3d(curX + 2, uY + 2, uD, midX - 2, uY + uH - 2, uD + 18, "outline");
+        addDoorFaceFeatures(curX + 2, uY + 2, midX - 2, uY + uH - 2, uD + 18, curDoorStyle);
         addBox3d(midX + 2, uY + 2, uD, curX + u.width - 2, uY + uH - 2, uD + 18, "outline");
+        addDoorFaceFeatures(midX + 2, uY + 2, curX + u.width - 2, uY + uH - 2, uD + 18, curDoorStyle);
         const hY = uY + uH - 60;
-        // Left door handle
-        const hL1 = project3d(midX - 25, hY - 30, uD + 26);
-        const hL2 = project3d(midX - 25, hY + 30, uD + 26);
-        addSegment(hL1, hL2, "outline");
-        addSegment(hL1, project3d(midX - 25, hY - 30, uD + 18), "interior");
-        addSegment(hL2, project3d(midX - 25, hY + 30, uD + 18), "interior");
-        // Right door handle
-        const hR1 = project3d(midX + 25, hY - 30, uD + 26);
-        const hR2 = project3d(midX + 25, hY + 30, uD + 26);
-        addSegment(hR1, hR2, "outline");
-        addSegment(hR1, project3d(midX + 25, hY - 30, uD + 18), "interior");
-        addSegment(hR2, project3d(midX + 25, hY + 30, uD + 18), "interior");
+        drawHandle3d(midX - 25, hY, uD + 18, curHandleType, "vertical", "left");
+        drawHandle3d(midX + 25, hY, uD + 18, curHandleType, "vertical", "right");
       } else if (u.internalShelves > 0) {
         // Open shelves
         const spacing = (uH - t * 2) / (u.internalShelves + 1);
@@ -1739,44 +2114,31 @@ export function generateIsometricView(
 
         // Wall Doors & Handles (handles at lower edge for reach)
         const hY = wallY + 60;
+        const curDoorStyle = wu.doorStyle || params.doorStyle;
+        const curHandleType = wu.handleType || params.handleType || "bar";
         if (wu.doorType === "singleLeft") {
           addBox3d(curWallX + 2, wallY + 2, wuD, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, "outline");
+          addDoorFaceFeatures(curWallX + 2, wallY + 2, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, curDoorStyle);
           const hX = curWallX + wu.width - 35;
-          const hP1 = project3d(hX, hY - 30, wuD + 26);
-          const hP2 = project3d(hX, hY + 30, wuD + 26);
-          addSegment(hP1, hP2, "outline");
-          addSegment(hP1, project3d(hX, hY - 30, wuD + 18), "interior");
-          addSegment(hP2, project3d(hX, hY + 30, wuD + 18), "interior");
+          drawHandle3d(hX, hY, wuD + 18, curHandleType, "vertical", "right");
         } else if (wu.doorType === "singleRight") {
           addBox3d(curWallX + 2, wallY + 2, wuD, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, "outline");
+          addDoorFaceFeatures(curWallX + 2, wallY + 2, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, curDoorStyle);
           const hX = curWallX + 35;
-          const hP1 = project3d(hX, hY - 30, wuD + 26);
-          const hP2 = project3d(hX, hY + 30, wuD + 26);
-          addSegment(hP1, hP2, "outline");
-          addSegment(hP1, project3d(hX, hY - 30, wuD + 18), "interior");
-          addSegment(hP2, project3d(hX, hY + 30, wuD + 18), "interior");
-        } else if (wu.doorType === "double") {
+          drawHandle3d(hX, hY, wuD + 18, curHandleType, "vertical", "left");
+        } else if (wu.doorType === "double" || wu.doorType === "cornerDouble") {
           const midX = curWallX + wu.width / 2;
           addBox3d(curWallX + 2, wallY + 2, wuD, midX - 2, wallY + wuH - 2, wuD + 18, "outline");
+          addDoorFaceFeatures(curWallX + 2, wallY + 2, midX - 2, wallY + wuH - 2, wuD + 18, curDoorStyle);
           addBox3d(midX + 2, wallY + 2, wuD, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, "outline");
-          const hL1 = project3d(midX - 25, hY - 30, wuD + 26);
-          const hL2 = project3d(midX - 25, hY + 30, wuD + 26);
-          addSegment(hL1, hL2, "outline");
-          addSegment(hL1, project3d(midX - 25, hY - 30, wuD + 18), "interior");
-          addSegment(hL2, project3d(midX - 25, hY + 30, wuD + 18), "interior");
-          const hR1 = project3d(midX + 25, hY - 30, wuD + 26);
-          const hR2 = project3d(midX + 25, hY + 30, wuD + 26);
-          addSegment(hR1, hR2, "outline");
-          addSegment(hR1, project3d(midX + 25, hY - 30, wuD + 18), "interior");
-          addSegment(hR2, project3d(midX + 25, hY + 30, wuD + 18), "interior");
+          addDoorFaceFeatures(midX + 2, wallY + 2, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, curDoorStyle);
+          drawHandle3d(midX - 25, hY, wuD + 18, curHandleType, "vertical", "left");
+          drawHandle3d(midX + 25, hY, wuD + 18, curHandleType, "vertical", "right");
         } else if (wu.doorType === "flipUp") {
           addBox3d(curWallX + 2, wallY + 2, wuD, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, "outline");
+          addDoorFaceFeatures(curWallX + 2, wallY + 2, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, curDoorStyle);
           const midX = curWallX + wu.width / 2;
-          const hP1 = project3d(midX - 45, hY, wuD + 26);
-          const hP2 = project3d(midX + 45, hY, wuD + 26);
-          addSegment(hP1, hP2, "outline");
-          addSegment(hP1, project3d(midX - 45, hY, wuD + 18), "interior");
-          addSegment(hP2, project3d(midX + 45, hY, wuD + 18), "interior");
+          drawHandle3d(midX, hY, wuD + 18, curHandleType, "horizontal", "center");
         } else if (wu.internalShelves > 0) {
           const spacing = (wuH - t * 2) / (wu.internalShelves + 1);
           for (let s = 1; s <= wu.internalShelves; s++) {
@@ -1809,53 +2171,64 @@ export function generateIsometricView(
 
       // Drawers at bottom if enabled
       let dSpaceH = 0;
+      const isConcealed = u.drawerType === "internal";
+      const isSliding = u.doorType === "sliding";
+
       if (u.hasDrawers && (u.drawerCount || 0) > 0) {
         const dCount = u.drawerCount || 2;
         const dH = u.drawerHeight || 180;
         dSpaceH = dCount * dH;
-        for (let di = 0; di < dCount; di++) {
-          const dy = uY + t + di * dH + 2;
-          addBox3d(curX + 2, dy, wd.depth, curX + u.width - 2, dy + dH - 4, wd.depth + 18, "outline");
-          // Drawer handle
-          const midX = curX + u.width / 2;
-          const midY = dy + (dH - 4) / 2;
-          const hP1 = project3d(midX - 35, midY, wd.depth + 26);
-          const hP2 = project3d(midX + 35, midY, wd.depth + 26);
-          addSegment(hP1, hP2, "outline");
-          addSegment(hP1, project3d(midX - 35, midY, wd.depth + 18), "interior");
-          addSegment(hP2, project3d(midX + 35, midY, wd.depth + 18), "interior");
+
+        // If not concealed (external drawers) or open carcass: draw exterior drawer facade
+        if (!isConcealed || u.doorType === "open") {
+          const curDoorStyle = u.doorStyle || params.doorStyle;
+          const curHandleType = u.handleType || params.handleType || "bar";
+          for (let di = 0; di < dCount; di++) {
+            const dy = uY + t + di * dH + 2;
+            addBox3d(curX + 2, dy, wd.depth, curX + u.width - 2, dy + dH - 4, wd.depth + 18, "outline");
+            addDoorFaceFeatures(curX + 2, dy, curX + u.width - 2, dy + dH - 4, wd.depth + 18, curDoorStyle);
+            // Drawer handle
+            const midX = curX + u.width / 2;
+            const midY = dy + (dH - 4) / 2;
+            drawHandle3d(midX, midY, wd.depth + 18, curHandleType, "horizontal", "center");
+          }
         }
       }
 
-      // Doors above drawers
-      const doorStartY = uY + t + dSpaceH + 2;
-      const doorH = u.height - t * 2 - dSpaceH - 4;
+      // Doors:
+      // If sliding door with internal drawers (or no drawers), doors run full carcass height!
+      const doorRunsFullHeight = isSliding && (isConcealed || !u.hasDrawers);
+      const doorStartY = doorRunsFullHeight ? (uY + t + 2) : (uY + t + dSpaceH + 2);
+      const doorH = doorRunsFullHeight ? (u.height - t * 2 - 4) : (u.height - t * 2 - dSpaceH - 4);
+
       if (doorH > 50 && u.doorType !== "open") {
-        if (u.doorType === "sliding" || u.doorType === "hingedDouble") {
+        const curDoorStyle = u.doorStyle || params.doorStyle;
+        const curHandleType = u.handleType || params.handleType || "bar";
+        if (isSliding) {
+          // Sliding doors: 2 leaves in offset Z planes
+          const leafW = (u.width - t * 2) / 2 + 18;
+          // Rear leaf at z = wd.depth - 55
+          addBox3d(curX + t, doorStartY, wd.depth - 55, curX + t + leafW, doorStartY + doorH, wd.depth - 37, "outline");
+          addDoorFaceFeatures(curX + t, doorStartY, curX + t + leafW, doorStartY + doorH, wd.depth - 37, curDoorStyle);
+          // Front leaf at z = wd.depth - 20
+          addBox3d(curX + u.width - t - leafW, doorStartY, wd.depth - 20, curX + u.width - t, doorStartY + doorH, wd.depth - 2, "outline");
+          addDoorFaceFeatures(curX + u.width - t - leafW, doorStartY, curX + u.width - t, doorStartY + doorH, wd.depth - 2, curDoorStyle);
+        } else if (u.doorType === "hingedDouble") {
           const midX = curX + u.width / 2;
           addBox3d(curX + 2, doorStartY, wd.depth, midX - 2, doorStartY + doorH, wd.depth + 18, "outline");
+          addDoorFaceFeatures(curX + 2, doorStartY, midX - 2, doorStartY + doorH, wd.depth + 18, curDoorStyle);
           addBox3d(midX + 2, doorStartY, wd.depth, curX + u.width - 2, doorStartY + doorH, wd.depth + 18, "outline");
+          addDoorFaceFeatures(midX + 2, doorStartY, curX + u.width - 2, doorStartY + doorH, wd.depth + 18, curDoorStyle);
           // Handles
           const hY = doorStartY + doorH / 2;
-          const hL1 = project3d(midX - 25, hY - 35, wd.depth + 26);
-          const hL2 = project3d(midX - 25, hY + 35, wd.depth + 26);
-          addSegment(hL1, hL2, "outline");
-          addSegment(hL1, project3d(midX - 25, hY - 35, wd.depth + 18), "interior");
-          addSegment(hL2, project3d(midX - 25, hY + 35, wd.depth + 18), "interior");
-          const hR1 = project3d(midX + 25, hY - 35, wd.depth + 26);
-          const hR2 = project3d(midX + 25, hY + 35, wd.depth + 26);
-          addSegment(hR1, hR2, "outline");
-          addSegment(hR1, project3d(midX + 25, hY - 35, wd.depth + 18), "interior");
-          addSegment(hR2, project3d(midX + 25, hY + 35, wd.depth + 18), "interior");
+          drawHandle3d(midX - 25, hY, wd.depth + 18, curHandleType, "vertical", "left", doorH > 1500 ? 120 : 70);
+          drawHandle3d(midX + 25, hY, wd.depth + 18, curHandleType, "vertical", "right", doorH > 1500 ? 120 : 70);
         } else {
           // Single hinged door
           addBox3d(curX + 2, doorStartY, wd.depth, curX + u.width - 2, doorStartY + doorH, wd.depth + 18, "outline");
+          addDoorFaceFeatures(curX + 2, doorStartY, curX + u.width - 2, doorStartY + doorH, wd.depth + 18, curDoorStyle);
           const hY = doorStartY + doorH / 2;
-          const hP1 = project3d(curX + u.width - 35, hY - 35, wd.depth + 26);
-          const hP2 = project3d(curX + u.width - 35, hY + 35, wd.depth + 26);
-          addSegment(hP1, hP2, "outline");
-          addSegment(hP1, project3d(curX + u.width - 35, hY - 35, wd.depth + 18), "interior");
-          addSegment(hP2, project3d(curX + u.width - 35, hY + 35, wd.depth + 18), "interior");
+          drawHandle3d(curX + u.width - 35, hY, wd.depth + 18, curHandleType, "vertical", "right", doorH > 1500 ? 120 : 70);
         }
       }
 
@@ -1866,8 +2239,10 @@ export function generateIsometricView(
     let curTopX = 0;
     wd.topUnits.forEach((tu) => {
       const tuY = wd.plinthH + wd.maxMainH;
+      const curDoorStyle = tu.doorStyle || params.doorStyle;
       addBox3d(curTopX, tuY, 0, curTopX + tu.width, tuY + tu.height, wd.depth, "outline");
       addBox3d(curTopX + 2, tuY + 2, wd.depth, curTopX + tu.width - 2, tuY + tu.height - 2, wd.depth + 18, "outline");
+      addDoorFaceFeatures(curTopX + 2, tuY + 2, curTopX + tu.width - 2, tuY + tu.height - 2, wd.depth + 18, curDoorStyle);
       curTopX += tu.width;
     });
   } else if (params.category === "Table" || params.category === "Desk") {
@@ -1950,21 +2325,16 @@ export function generateIsometricView(
       const frontZ = D;
       const doorGap = 2.5;
       const midX = W / 2;
+      const curDoorStyle = params.doorStyle;
+      const curHandleType = params.handleType || "bar";
       addBox3d(doorGap, bodyY + doorGap, frontZ, midX - doorGap / 2, bodyY + bodyH - doorGap, frontZ + 18, "outline");
+      addDoorFaceFeatures(doorGap, bodyY + doorGap, midX - doorGap / 2, bodyY + bodyH - doorGap, frontZ + 18, curDoorStyle);
       addBox3d(midX + doorGap / 2, bodyY + doorGap, frontZ, W - doorGap, bodyY + bodyH - doorGap, frontZ + 18, "outline");
+      addDoorFaceFeatures(midX + doorGap / 2, bodyY + doorGap, W - doorGap, bodyY + bodyH - doorGap, frontZ + 18, curDoorStyle);
 
       const hY = bodyY + bodyH / 2;
-      const hL1 = project3d(midX - 35, hY - 45, frontZ + 28);
-      const hL2 = project3d(midX - 35, hY + 45, frontZ + 28);
-      addSegment(hL1, hL2, "outline");
-      addSegment(hL1, project3d(midX - 35, hY - 45, frontZ + 18), "interior");
-      addSegment(hL2, project3d(midX - 35, hY + 45, frontZ + 18), "interior");
-
-      const hR1 = project3d(midX + 35, hY - 45, frontZ + 28);
-      const hR2 = project3d(midX + 35, hY + 45, frontZ + 28);
-      addSegment(hR1, hR2, "outline");
-      addSegment(hR1, project3d(midX + 35, hY - 45, frontZ + 18), "interior");
-      addSegment(hR2, project3d(midX + 35, hY + 45, frontZ + 18), "interior");
+      drawHandle3d(midX - 35, hY, frontZ + 18, curHandleType, "vertical", "left");
+      drawHandle3d(midX + 35, hY, frontZ + 18, curHandleType, "vertical", "right");
     }
   }
 

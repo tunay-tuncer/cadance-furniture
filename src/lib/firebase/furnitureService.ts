@@ -11,6 +11,8 @@ import {
 } from "firebase/firestore";
 import { db } from "./client";
 
+import type { FurnitureParams } from "@/components/modeler/FurnitureMesh";
+
 export type FurnitureCategory = "Table" | "Shelf" | "Cabinet" | "Wardrobe" | "Chair" | "Desk" | "Custom";
 
 export interface FurnitureItem {
@@ -27,6 +29,7 @@ export interface FurnitureItem {
   estimatedWeight: number; // kg
   estimatedCost: number; // currency
   notes?: string;
+  params?: FurnitureParams;
   createdAt?: Timestamp | unknown;
 }
 
@@ -68,6 +71,7 @@ export const subscribeToProjectFurnitures = (
           estimatedWeight: Number(data.estimatedWeight) || 15,
           estimatedCost: Number(data.estimatedCost) || 0,
           notes: data.notes || "",
+          params: data.params,
           createdAt: data.createdAt,
         };
       });
