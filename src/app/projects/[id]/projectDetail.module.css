@@ -111,7 +111,7 @@
 /* Optimization Metrics Summary Bar */
 .metricsBar {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
   gap: 1rem;
 }
 
@@ -170,7 +170,7 @@
 /* Furniture Grid */
 .furnitureGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
   gap: 1.5rem;
   width: 100%;
 }
@@ -357,9 +357,40 @@
 
 @media (max-width: 768px) {
   .container {
-    padding: 5.5rem 1.25rem 2rem;
+    padding: 5rem 1rem 2rem;
+    gap: 1.5rem;
   }
+
+  .projectHeader {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1.15rem;
+  }
+
+  .projectTitle {
+    font-size: 1.45rem;
+  }
+
+  .headerActions {
+    width: 100%;
+  }
+
+  .addFurnitureBtn {
+    width: 100%;
+    justify-content: center;
+  }
+
   .metricsBar {
     grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .furnitureGrid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .furnitureCard {
+    padding: 1.25rem;
   }
 }

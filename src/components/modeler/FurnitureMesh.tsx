@@ -16,15 +16,17 @@ export type MaterialPreset = "oak" | "walnut" | "plywood" | "blackSteel" | "whit
 export interface KitchenCabinetUnit {
   id: string;
   name: string;
-  type: "base" | "wall" | "corner-base" | "corner-wall"; // base floor unit vs wall suspended unit vs 90° corner base vs 90° corner wall
+  type: "base" | "wall" | "corner-base" | "corner-wall" | "tall" | "fridge" | "dishwasher"; // cabinet type including tall pantry, fridge housing, dishwasher
   orientation?: "straight" | "corner-right" | "corner-left"; // orientation & turn direction
   runAxis?: "run0" | "run1"; // placement on Run 0 (Main Axis) vs Run 1 (Turned Axis)
   materialType?: MaterialPreset; // individual cabinet material override
   doorOpenPercent?: number; // individual door open state (0-100%)
   doorStyle?: "slab" | "slimShaker" | "shaker" | "fluted" | "framedGlass";
   hasBackPanel?: boolean;
+  hasNoBottom?: boolean; // omit bottom carcass panel (fridge / dishwasher)
+  hasNoCountertop?: boolean; // omit countertop on this unit (tall cabinet / fridge)
   width: number;  // mm (e.g. 600 or 900 for corner)
-  height: number; // mm (e.g. 720)
+  height: number; // mm (e.g. 720 for base, 2000 for fridge, 2100 for tall)
   depth: number;  // mm (e.g. 600 or 900 for corner, 350 for wall)
   cornerDepth?: number; // Carcass return depth for corner cabinets (arm depth, default: 600mm for base, 350mm for wall)
   bottomOffset?: number; // Distance from bottom cabinet / countertop clearance (default: 600mm)
@@ -118,6 +120,9 @@ export interface FurnitureParams {
   // Board & Construction Specs
   boardThickness?: number; // mm (default 18mm)
   tableTopThickness?: number; // mm (for table/desk top board thickness, default 18mm)
+  hasCountertop?: boolean;    // optional countertop on base cabinets
+  countertopThickness?: number; // mm (height / thickness of countertop, default 30mm)
+  hasBacksplash?: boolean;    // optional wall cladding panel covering wall between base and top cabinets
   apronHeight?: number; // mm (height/width of apron rail, default 65mm)
   hasBackPanel?: boolean;  // solid back panel or open back
   topOverhang?: number;    // mm (tabletop overhang beyond apron, can be 0)
@@ -752,8 +757,8 @@ export default function FurnitureMesh({
       const flutedGeom = createFlutedPanelGeometry(IW, IH, dt - 0.002, 0.025);
       return (
         <group position={dpos} rotation={drot}>
-          {/* Fluted Center Panel */}
-          <mesh position={[0, 0, 0]} geometry={flutedGeom} material={flutedMaterial} castShadow receiveShadow>
+          {/* Fluted Center Panel (Inherits Selected Unit Material) */}
+          <mesh position={[0, 0, 0]} geometry={flutedGeom} material={dmat} castShadow receiveShadow>
             <Edges threshold={15} color={isSelected ? "#60a5fa" : dec} />
           </mesh>
           {/* Left Stile */}
@@ -1078,7 +1083,7 @@ export default function FurnitureMesh({
                     >
                       <boxGeometry args={[pedW - t * 2 - 0.03, 0.01, drawerD * 0.9]} />
                     </mesh>
-                    {renderHandle([0, 0, 0.01], false)}
+                    {renderHandle([0, 0, 0.009], false)}
                   </group>
                 );
               })}
@@ -1356,7 +1361,7 @@ export default function FurnitureMesh({
       },
     ];
 
-    const baseUnits = units.filter((u) => u.type === "base" || u.type === "corner-base");
+    const baseUnits = units.filter((u) => u.type !== "wall" && u.type !== "corner-wall");
     const wallUnits = units.filter((u) => u.type === "wall" || u.type === "corner-wall");
 
     const plinthH = baseType === "floating" ? 0 : plinthHeight / 1000;
@@ -1463,8 +1468,11 @@ export default function FurnitureMesh({
     // UPPER WALL UNITS RUN LAYOUT (Supports Linear & 90° L-Shaped Runs)
     // -------------------------------------------------------------
     const D_WALL_STD = 0.35; // Standard 350mm upper wall cabinet depth
-    const maxBaseH = baseUnits.length > 0 ? Math.max(...baseUnits.map((u) => u.height / 1000)) : 0.72;
-    const countertopThick = (tableTopThickness || 30) / 1000;
+    const standardBaseUnits = baseUnits.filter((u) => u.type !== "tall" && u.type !== "fridge");
+    const maxBaseH = standardBaseUnits.length > 0 ? Math.max(...standardBaseUnits.map((u) => u.height / 1000)) : 0.72;
+    const hasCountertop = Boolean(params.hasCountertop);
+    const countertopThick = (params.countertopThickness ?? tableTopThickness ?? 30) / 1000;
+    const effectiveCtH = hasCountertop ? countertopThick : 0;
 
     interface WallLayoutItem {
       unit: KitchenCabinetUnit;
@@ -1502,7 +1510,7 @@ export default function FurnitureMesh({
         ? (u.depth ? u.depth / 1000 : 0.60)
         : (u.depth ? u.depth / 1000 : D_WALL_STD);
       const clearance = (u.bottomOffset !== undefined ? u.bottomOffset : 600) / 1000;
-      const unitWallY = plinthH + maxBaseH + countertopThick + clearance;
+      const unitWallY = plinthH + maxBaseH + effectiveCtH + clearance;
 
       if (!isCornerWall && wallCurRun === 0) {
         // Straight wall unit on primary Run 0 (along X, facing +Z)
@@ -1657,25 +1665,28 @@ export default function FurnitureMesh({
           <group>
             {centeredBaseItems.map((item, bi) => {
               const uMat = getUnitMaterial(item.unit.materialType);
+              if (item.unit.type === "fridge") {
+                return null; // Open base to floor for sliding fridge in
+              }
               if (item.isCorner) {
                 // L-Corner Plinth
                 const armD = (item.unit.cornerDepth || 600) / 1000;
-                const w1 = item.uW - armD + 0.04;
-                const d1 = item.uD - armD + 0.04;
+                const w1 = item.uW - armD + plinthRec;
+                const d1 = item.uD - armD + plinthRec;
                 return (
                   <group key={`corPlinth-${bi}`} position={item.pos}>
-                    <mesh position={[-item.uW / 2 + (item.uW - armD) / 2, -plinthH / 2, -item.uD / 2 + armD - plinthRec]} material={uMat}>
+                    <mesh position={[-item.uW / 2 + w1 / 2, -plinthH / 2, -item.uD / 2 + armD - plinthRec]} material={uMat}>
                       <boxGeometry args={[w1, plinthH, 0.018]} />
                       <Edges threshold={15} color={edgeColor} />
                     </mesh>
-                    <mesh position={[item.uW / 2 - armD + plinthRec, -plinthH / 2, item.uD / 2 - (item.uD - armD) / 2]} material={uMat}>
+                    <mesh position={[item.uW / 2 - armD + plinthRec, -plinthH / 2, -item.uD / 2 + armD + (item.uD - armD - plinthRec) / 2]} material={uMat}>
                       <boxGeometry args={[0.018, plinthH, d1]} />
                       <Edges threshold={15} color={edgeColor} />
                     </mesh>
                   </group>
                 );
               } else if (item.runIndex === 0) {
-                // Plinth along Run 0
+                // Plinth along Run 0 (Full width matching cabinet, no gap when stacked)
                 return (
                   <mesh
                     key={`plinthRun0-${bi}`}
@@ -1683,7 +1694,7 @@ export default function FurnitureMesh({
                     material={uMat}
                     castShadow
                   >
-                    <boxGeometry args={[item.uW - 0.005, plinthH, 0.018]} />
+                    <boxGeometry args={[item.uW, plinthH, 0.018]} />
                     <Edges threshold={15} color={edgeColor} />
                   </mesh>
                 );
@@ -1696,7 +1707,7 @@ export default function FurnitureMesh({
                     material={uMat}
                     castShadow
                   >
-                    <boxGeometry args={[0.018, plinthH, item.uW - 0.005]} />
+                    <boxGeometry args={[0.018, plinthH, item.uW]} />
                     <Edges threshold={15} color={edgeColor} />
                   </mesh>
                 );
@@ -1738,10 +1749,13 @@ export default function FurnitureMesh({
           </group>
         )}
 
-        {/* Continuous Countertop (Tezgah) Spanning Across All Base Cabinets */}
-        {centeredBaseItems.length > 0 && (
+        {/* Continuous Countertop (Tezgah) Spanning Across All Base Cabinets (Optional) */}
+        {centeredBaseItems.length > 0 && hasCountertop && (
           <group>
             {centeredBaseItems.map((item, ci) => {
+              if (item.unit.type === "tall" || item.unit.type === "fridge" || item.unit.hasNoCountertop) {
+                return null;
+              }
               const ctY = plinthH + item.uH + countertopThick / 2;
               if (item.isCorner) {
                 // L-Corner Countertop (Run 0 part + Turned part)
@@ -1804,6 +1818,59 @@ export default function FurnitureMesh({
                 );
               }
             })}
+          </group>
+        )}
+
+        {/* Backsplash / Wall Cladding (Tezgah Arası Panel - Optional) */}
+        {centeredBaseItems.length > 0 && params.hasBacksplash && (
+          <group>
+            {(() => {
+              const baseTopY = plinthH + maxBaseH + effectiveCtH;
+              const splashH = wallUnits.length > 0
+                ? (wallUnits[0].bottomOffset !== undefined ? wallUnits[0].bottomOffset : 600) / 1000
+                : 0.60;
+              const splashCenterY = baseTopY + splashH / 2;
+              const splashThick = 0.018;
+
+              // Run 0 span along X
+              const run0SpanW = (hasBaseCorner ? cornerOuterX : cursorX);
+
+              return (
+                <group>
+                  {/* Run 0 Backsplash Panel */}
+                  <mesh
+                    position={[
+                      run0SpanW / 2 - centerOffX,
+                      splashCenterY,
+                      -D_STD / 2 - centerOffZ + splashThick / 2,
+                    ]}
+                    material={countertopMaterial}
+                    castShadow
+                    receiveShadow
+                  >
+                    <boxGeometry args={[run0SpanW, splashH, splashThick]} />
+                    <Edges threshold={15} color={edgeColor} />
+                  </mesh>
+
+                  {/* Run 1 Backsplash Panel (along Turned Wall if corner exists) */}
+                  {hasBaseCorner && (
+                    <mesh
+                      position={[
+                        cornerOuterX - centerOffX - splashThick / 2,
+                        splashCenterY,
+                        (-D_STD / 2 + cornerD / 2) - centerOffZ,
+                      ]}
+                      material={countertopMaterial}
+                      castShadow
+                      receiveShadow
+                    >
+                      <boxGeometry args={[splashThick, splashH, cornerD]} />
+                      <Edges threshold={15} color={edgeColor} />
+                    </mesh>
+                  )}
+                </group>
+              );
+            })()}
           </group>
         )}
 
@@ -1959,7 +2026,7 @@ export default function FurnitureMesh({
                               width={uW - armD - 0.008}
                               height={innerH}
                               thickness={0.018}
-                              doorStyle={unit.doorStyle || params.doorStyle}
+                              doorStyle={unit.doorStyle || "slab"}
                               material={uMat}
                               frameMaterial={handleMaterial}
                               handleType={unit.handleType}
@@ -1967,7 +2034,7 @@ export default function FurnitureMesh({
                               isSelected={isSelected}
                               position={[(uW - armD - 0.008) / 2, 0, 0]}
                             />
-                            {renderHandle([uW - armD - 0.035, innerH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish, { doorHeight: innerH })}
+                            {renderHandle([uW - armD - 0.035, innerH * 0.25, 0.009], true, 0, unit.handleType, unit.handleFinish, { doorHeight: innerH })}
                           </group>
 
                           {/* Door 2: Facing -X (hinged at turned top) */}
@@ -1979,7 +2046,7 @@ export default function FurnitureMesh({
                               width={uD - armD - 0.008}
                               height={innerH}
                               thickness={0.018}
-                              doorStyle={unit.doorStyle || params.doorStyle}
+                              doorStyle={unit.doorStyle || "slab"}
                               material={uMat}
                               frameMaterial={handleMaterial}
                               handleType={unit.handleType}
@@ -1988,7 +2055,7 @@ export default function FurnitureMesh({
                               position={[0, 0, -(uD - armD - 0.008) / 2]}
                               rotation={[0, Math.PI / 2, 0]}
                             />
-                            {renderHandle([-0.02, innerH * 0.25, -(uD - armD - 0.035)], true, 0, unit.handleType, unit.handleFinish, { doorHeight: innerH })}
+                            {renderHandle([-0.009, innerH * 0.25, -(uD - armD - 0.035)], true, 0, unit.handleType, unit.handleFinish, { doorHeight: innerH })}
                           </group>
                         </group>
                       )}
@@ -1998,13 +2065,13 @@ export default function FurnitureMesh({
 
                 {/* Left Snap Detector on Run 0 */}
                 {activeTool === "add-base" && isHovered && (
-                  <group position={[-uW / 2 - 0.04, uH / 2, -uD / 2 + D_STD / 2]}>
+                  <group position={[-uW / 2 - 0.12, uH / 2, -uD / 2 + D_STD / 2]}>
                     <mesh
                       onPointerOver={(e) => { e.stopPropagation(); setHoveredSnap({ unitId: unit.id, side: "left" }); }}
                       onPointerOut={(e) => { e.stopPropagation(); setHoveredSnap(null); }}
                     >
-                      <boxGeometry args={[0.08, uH, D_STD]} />
-                      <meshBasicMaterial color="#38bdf8" transparent opacity={0.25} />
+                      <boxGeometry args={[0.24, uH, D_STD]} />
+                      <meshBasicMaterial color="#38bdf8" transparent opacity={0.4} />
                       <Edges threshold={1} color="#38bdf8" />
                     </mesh>
                     <Html position={[0, 0, D_STD / 2 + 0.04]} center>
@@ -2167,22 +2234,33 @@ export default function FurnitureMesh({
                 <boxGeometry args={[t, uH, uD]} />
                 <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
               </mesh>
-              {/* Bottom Panel (Sits between side gables) */}
-              <mesh position={[0, t / 2, 0]} material={uMat} castShadow>
-                <boxGeometry args={[uW - t * 2, t, uD]} />
-                <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
-              </mesh>
-              {/* Top Stretchers: 2x 80mm deep stretchers (ön ve arka üst kayıt) */}
-              {/* Front Top Stretcher */}
-              <mesh position={[0, uH - t / 2, uD / 2 - 0.04]} material={uMat} castShadow>
-                <boxGeometry args={[uW - t * 2, t, 0.08]} />
-                <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
-              </mesh>
-              {/* Back Top Stretcher */}
-              <mesh position={[0, uH - t / 2, -uD / 2 + 0.04]} material={uMat} castShadow>
-                <boxGeometry args={[uW - t * 2, t, 0.08]} />
-                <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
-              </mesh>
+              {/* Bottom Panel (Sits between side gables - omitted for fridge & dishwasher) */}
+              {!unit.hasNoBottom && unit.type !== "fridge" && unit.type !== "dishwasher" && (
+                <mesh position={[0, t / 2, 0]} material={uMat} castShadow>
+                  <boxGeometry args={[uW - t * 2, t, uD]} />
+                  <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+                </mesh>
+              )}
+              {/* Top Panel: Solid full top for tall & fridge units, 2x stretchers for base cabinets under countertop */}
+              {unit.type === "tall" || unit.type === "fridge" ? (
+                <mesh position={[0, uH - t / 2, 0]} material={uMat} castShadow>
+                  <boxGeometry args={[uW - t * 2, t, uD]} />
+                  <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+                </mesh>
+              ) : (
+                <>
+                  {/* Front Top Stretcher */}
+                  <mesh position={[0, uH - t / 2, uD / 2 - 0.04]} material={uMat} castShadow>
+                    <boxGeometry args={[uW - t * 2, t, 0.08]} />
+                    <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+                  </mesh>
+                  {/* Back Top Stretcher */}
+                  <mesh position={[0, uH - t / 2, -uD / 2 + 0.04]} material={uMat} castShadow>
+                    <boxGeometry args={[uW - t * 2, t, 0.08]} />
+                    <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+                  </mesh>
+                </>
+              )}
               {/* 8mm Back Panel (Arkalık: inset 18mm from rear edge in grooved channel) */}
               {(unit.hasBackPanel !== false) && (
                 <mesh position={[0, uH / 2, -uD / 2 + 0.018 + 0.004]} material={uMat}>
@@ -2279,16 +2357,16 @@ export default function FurnitureMesh({
                           width={uW - 0.008}
                           height={dh - 0.006}
                           thickness={0.018}
-                          doorStyle={unit.doorStyle || params.doorStyle}
+                          doorStyle={unit.doorStyle || "slab"}
                           material={uMat}
                           frameMaterial={handleMaterial}
                           handleType={unit.handleType}
                           edgeColor={edgeColor}
                           isSelected={isSelected}
                         />
-                        {/* Drawer pull handle */}
+                        {/* Drawer pull handle - flush on door surface (0 gap) */}
                         {unit.handleType !== "cncJProfile" &&
-                          renderHandle([0, 0, 0.02], false, 0, unit.handleType, unit.handleFinish, { drawerWidth: uW })}
+                          renderHandle([0, 0, 0.009], false, 0, unit.handleType, unit.handleFinish, { drawerWidth: uW })}
                       </group>
                     );
                   });
@@ -2308,7 +2386,7 @@ export default function FurnitureMesh({
                           width={uW - 0.008}
                           height={doorH}
                           thickness={0.018}
-                          doorStyle={unit.doorStyle || params.doorStyle}
+                          doorStyle={unit.doorStyle || "slab"}
                           material={uMat}
                           frameMaterial={handleMaterial}
                           handleType={unit.handleType}
@@ -2316,7 +2394,7 @@ export default function FurnitureMesh({
                           isSelected={isSelected}
                           position={[(uW - 0.008) / 2, 0, 0.009]}
                         />
-                        {renderHandle([uW - 0.04, doorH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish, { doorHeight: doorH })}
+                        {renderHandle([uW - 0.04, doorH * 0.25, 0.018], true, 0, unit.handleType, unit.handleFinish, { doorHeight: doorH })}
                       </group>
                     ) : unit.doorType === "singleRight" ? (
                       <group
@@ -2327,7 +2405,7 @@ export default function FurnitureMesh({
                           width={uW - 0.008}
                           height={doorH}
                           thickness={0.018}
-                          doorStyle={unit.doorStyle || params.doorStyle}
+                          doorStyle={unit.doorStyle || "slab"}
                           material={uMat}
                           frameMaterial={handleMaterial}
                           handleType={unit.handleType}
@@ -2335,7 +2413,7 @@ export default function FurnitureMesh({
                           isSelected={isSelected}
                           position={[-(uW - 0.008) / 2, 0, 0.009]}
                         />
-                        {renderHandle([-uW + 0.04, doorH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish, { isRightDoor: true, doorHeight: doorH })}
+                        {renderHandle([-uW + 0.04, doorH * 0.25, 0.018], true, 0, unit.handleType, unit.handleFinish, { isRightDoor: true, doorHeight: doorH })}
                       </group>
                     ) : unit.doorType === "double" ? (
                       <group>
@@ -2344,7 +2422,7 @@ export default function FurnitureMesh({
                             width={uW / 2 - 0.006}
                             height={doorH}
                             thickness={0.018}
-                            doorStyle={unit.doorStyle || params.doorStyle}
+                            doorStyle={unit.doorStyle || "slab"}
                             material={uMat}
                             frameMaterial={handleMaterial}
                             handleType={unit.handleType}
@@ -2352,14 +2430,14 @@ export default function FurnitureMesh({
                             isSelected={isSelected}
                             position={[(uW / 2 - 0.006) / 2, 0, 0.009]}
                           />
-                          {renderHandle([uW / 2 - 0.035, doorH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish, { isRightDoor: false, doorHeight: doorH })}
+                          {renderHandle([uW / 2 - 0.035, doorH * 0.25, 0.018], true, 0, unit.handleType, unit.handleFinish, { isRightDoor: false, doorHeight: doorH })}
                         </group>
                         <group position={[uW / 2 - 0.004, uH / 2, uD / 2]} rotation={[0, effectiveAngle, 0]}>
                           <ArchitecturalDoorMesh
                             width={uW / 2 - 0.006}
                             height={doorH}
                             thickness={0.018}
-                            doorStyle={unit.doorStyle || params.doorStyle}
+                            doorStyle={unit.doorStyle || "slab"}
                             material={uMat}
                             frameMaterial={handleMaterial}
                             handleType={unit.handleType}
@@ -2367,7 +2445,7 @@ export default function FurnitureMesh({
                             isSelected={isSelected}
                             position={[-(uW / 2 - 0.006) / 2, 0, 0.009]}
                           />
-                          {renderHandle([-uW / 2 + 0.035, doorH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish, { isRightDoor: true, doorHeight: doorH })}
+                          {renderHandle([-uW / 2 + 0.035, doorH * 0.25, 0.018], true, 0, unit.handleType, unit.handleFinish, { isRightDoor: true, doorHeight: doorH })}
                         </group>
                       </group>
                     ) : null}
@@ -2379,13 +2457,13 @@ export default function FurnitureMesh({
               {activeTool === "add-base" && isHovered && (
                 <group>
                   {/* Left Snap Detector (Places unit to the left of this cabinet) */}
-                  <group position={[-uW / 2 - 0.04, uH / 2, 0]}>
+                  <group position={[-uW / 2 - 0.12, uH / 2, 0]}>
                     <mesh
                       onPointerOver={(e) => { e.stopPropagation(); setHoveredSnap({ unitId: unit.id, side: "left" }); }}
                       onPointerOut={(e) => { e.stopPropagation(); setHoveredSnap(null); }}
                     >
-                      <boxGeometry args={[0.08, uH, uD]} />
-                      <meshBasicMaterial color="#38bdf8" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "left" ? 0.35 : 0.12} />
+                      <boxGeometry args={[0.24, uH, uD]} />
+                      <meshBasicMaterial color="#38bdf8" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "left" ? 0.45 : 0.2} />
                       <Edges threshold={1} color="#38bdf8" />
                     </mesh>
                     <Html position={[0, 0, uD / 2 + 0.04]} center>
@@ -2413,13 +2491,13 @@ export default function FurnitureMesh({
                   </group>
 
                   {/* Right Snap Detector (Continues current run) */}
-                  <group position={[uW / 2 + 0.04, uH / 2, 0]}>
+                  <group position={[uW / 2 + 0.12, uH / 2, 0]}>
                     <mesh
                       onPointerOver={(e) => { e.stopPropagation(); setHoveredSnap({ unitId: unit.id, side: "right" }); }}
                       onPointerOut={(e) => { e.stopPropagation(); setHoveredSnap(null); }}
                     >
-                      <boxGeometry args={[0.08, uH, uD]} />
-                      <meshBasicMaterial color="#38bdf8" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "right" ? 0.35 : 0.12} />
+                      <boxGeometry args={[0.24, uH, uD]} />
+                      <meshBasicMaterial color="#38bdf8" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "right" ? 0.45 : 0.2} />
                       <Edges threshold={1} color="#38bdf8" />
                     </mesh>
                     <Html position={[0, 0, uD / 2 + 0.04]} center>
@@ -2734,7 +2812,7 @@ export default function FurnitureMesh({
                                 width={uW - armD - 0.004}
                                 height={wallDoorH}
                                 thickness={0.018}
-                                doorStyle={unit.doorStyle || params.doorStyle}
+                                doorStyle={unit.doorStyle || "slab"}
                                 material={uMat}
                                 frameMaterial={handleMaterial}
                                 handleType={unit.handleType}
@@ -2743,7 +2821,7 @@ export default function FurnitureMesh({
                                 invertY={true}
                                 position={[(uW - armD - 0.004) / 2, 0, 0]}
                               />
-                              {renderHandle([uW - armD - 0.04, -wallDoorH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish, { doorHeight: wallDoorH })}
+                              {renderHandle([uW - armD - 0.04, -wallDoorH * 0.25, 0.009], true, 0, unit.handleType, unit.handleFinish, { doorHeight: wallDoorH })}
                             </group>
 
                             {/* Door 2: Facing -X (hinged at turned gable) */}
@@ -2755,7 +2833,7 @@ export default function FurnitureMesh({
                                 width={uD - armD - 0.004}
                                 height={wallDoorH}
                                 thickness={0.018}
-                                doorStyle={unit.doorStyle || params.doorStyle}
+                                doorStyle={unit.doorStyle || "slab"}
                                 material={uMat}
                                 frameMaterial={handleMaterial}
                                 handleType={unit.handleType}
@@ -2765,7 +2843,7 @@ export default function FurnitureMesh({
                                 position={[0, 0, -(uD - armD - 0.004) / 2]}
                                 rotation={[0, Math.PI / 2, 0]}
                               />
-                              {renderHandle([0.02, -wallDoorH * 0.25, -(uD - armD - 0.04)], true, 0, unit.handleType, unit.handleFinish, { doorHeight: wallDoorH })}
+                              {renderHandle([0.009, -wallDoorH * 0.25, -(uD - armD - 0.04)], true, 0, unit.handleType, unit.handleFinish, { doorHeight: wallDoorH })}
                             </group>
                           </group>
                         )}
@@ -2886,7 +2964,7 @@ export default function FurnitureMesh({
                             width={uW - 0.008}
                             height={wallDoorH}
                             thickness={0.018}
-                            doorStyle={unit.doorStyle || params.doorStyle}
+                            doorStyle={unit.doorStyle || "slab"}
                             material={uMat}
                             frameMaterial={handleMaterial}
                             handleType={unit.handleType}
@@ -2895,7 +2973,7 @@ export default function FurnitureMesh({
                             invertY={true}
                             position={[(uW - 0.008) / 2, 0, 0.009]}
                           />
-                          {renderHandle([uW - 0.04, -wallDoorH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish, { doorHeight: wallDoorH })}
+                          {renderHandle([uW - 0.04, -wallDoorH * 0.25, 0.018], true, 0, unit.handleType, unit.handleFinish, { doorHeight: wallDoorH })}
                         </group>
                       ) : unit.doorType === "singleRight" ? (
                         <group position={[uW / 2 - 0.004, uH / 2, uD / 2]} rotation={[0, unitDoorAngle, 0]}>
@@ -2903,7 +2981,7 @@ export default function FurnitureMesh({
                             width={uW - 0.008}
                             height={wallDoorH}
                             thickness={0.018}
-                            doorStyle={unit.doorStyle || params.doorStyle}
+                            doorStyle={unit.doorStyle || "slab"}
                             material={uMat}
                             frameMaterial={handleMaterial}
                             handleType={unit.handleType}
@@ -2912,7 +2990,7 @@ export default function FurnitureMesh({
                             invertY={true}
                             position={[-(uW - 0.008) / 2, 0, 0.009]}
                           />
-                          {renderHandle([-uW + 0.04, -wallDoorH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish, { isRightDoor: true, doorHeight: wallDoorH })}
+                          {renderHandle([-uW + 0.04, -wallDoorH * 0.25, 0.018], true, 0, unit.handleType, unit.handleFinish, { isRightDoor: true, doorHeight: wallDoorH })}
                         </group>
                       ) : unit.doorType === "flipUp" ? (
                         <group position={[0, uH - 0.004, uD / 2]} rotation={[-unitDoorAngle, 0, 0]}>
@@ -2920,7 +2998,7 @@ export default function FurnitureMesh({
                             width={uW - 0.008}
                             height={wallDoorH}
                             thickness={0.018}
-                            doorStyle={unit.doorStyle || params.doorStyle}
+                            doorStyle={unit.doorStyle || "slab"}
                             material={uMat}
                             frameMaterial={handleMaterial}
                             handleType={unit.handleType}
@@ -2929,7 +3007,7 @@ export default function FurnitureMesh({
                             invertY={true}
                             position={[0, -wallDoorH / 2, 0.009]}
                           />
-                          {renderHandle([0, -wallDoorH + 0.04, 0.02], false, 0, unit.handleType, unit.handleFinish, { drawerWidth: uW })}
+                          {renderHandle([0, -wallDoorH + 0.04, 0.018], false, 0, unit.handleType, unit.handleFinish, { drawerWidth: uW })}
                         </group>
                       ) : (
                         // Double Doors
@@ -2939,7 +3017,7 @@ export default function FurnitureMesh({
                               width={uW / 2 - 0.006}
                               height={wallDoorH}
                               thickness={0.018}
-                              doorStyle={unit.doorStyle || params.doorStyle}
+                              doorStyle={unit.doorStyle || "slab"}
                               material={uMat}
                               frameMaterial={handleMaterial}
                               handleType={unit.handleType}
@@ -2948,14 +3026,14 @@ export default function FurnitureMesh({
                               invertY={true}
                               position={[(uW / 2 - 0.006) / 2, 0, 0.009]}
                             />
-                            {renderHandle([uW / 2 - 0.035, -wallDoorH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish, { isRightDoor: false, doorHeight: wallDoorH })}
+                            {renderHandle([uW / 2 - 0.035, -wallDoorH * 0.25, 0.018], true, 0, unit.handleType, unit.handleFinish, { isRightDoor: false, doorHeight: wallDoorH })}
                           </group>
                           <group position={[uW / 2 - 0.004, uH / 2, uD / 2]} rotation={[0, unitDoorAngle, 0]}>
                             <ArchitecturalDoorMesh
                               width={uW / 2 - 0.006}
                               height={wallDoorH}
                               thickness={0.018}
-                              doorStyle={unit.doorStyle || params.doorStyle}
+                              doorStyle={unit.doorStyle || "slab"}
                               material={uMat}
                               frameMaterial={handleMaterial}
                               handleType={unit.handleType}
@@ -2964,7 +3042,7 @@ export default function FurnitureMesh({
                               invertY={true}
                               position={[-(uW / 2 - 0.006) / 2, 0, 0.009]}
                             />
-                            {renderHandle([-uW / 2 + 0.035, -wallDoorH * 0.25, 0.02], true, 0, unit.handleType, unit.handleFinish, { isRightDoor: true, doorHeight: wallDoorH })}
+                            {renderHandle([-uW / 2 + 0.035, -wallDoorH * 0.25, 0.018], true, 0, unit.handleType, unit.handleFinish, { isRightDoor: true, doorHeight: wallDoorH })}
                           </group>
                         </group>
                       )}
@@ -2977,13 +3055,13 @@ export default function FurnitureMesh({
               {(isHovered || activeTool === "add-wall") && (
                 <group>
                   {/* Left Snap Detector (Adds to the left of this wall unit) */}
-                  <group position={[-uW / 2 - 0.04, uH / 2, 0]}>
+                  <group position={[-uW / 2 - 0.12, uH / 2, 0]}>
                     <mesh
                       onPointerOver={(e) => { e.stopPropagation(); setHoveredSnap({ unitId: unit.id, side: "left" }); }}
                       onPointerOut={(e) => { e.stopPropagation(); setHoveredSnap(null); }}
                     >
-                      <boxGeometry args={[0.08, uH, uD]} />
-                      <meshBasicMaterial color="#c084fc" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "left" ? 0.35 : 0.12} />
+                      <boxGeometry args={[0.24, uH, uD]} />
+                      <meshBasicMaterial color="#c084fc" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "left" ? 0.45 : 0.2} />
                       <Edges threshold={1} color="#c084fc" />
                     </mesh>
                     <Html position={[0, 0, uD / 2 + 0.04]} center>
@@ -3013,13 +3091,13 @@ export default function FurnitureMesh({
                   </group>
 
                   {/* Right Snap Detector (Adds to the right of this wall unit) */}
-                  <group position={[uW / 2 + 0.04, uH / 2, 0]}>
+                  <group position={[uW / 2 + 0.12, uH / 2, 0]}>
                     <mesh
                       onPointerOver={(e) => { e.stopPropagation(); setHoveredSnap({ unitId: unit.id, side: "right" }); }}
                       onPointerOut={(e) => { e.stopPropagation(); setHoveredSnap(null); }}
                     >
-                      <boxGeometry args={[0.08, uH, uD]} />
-                      <meshBasicMaterial color="#c084fc" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "right" ? 0.35 : 0.12} />
+                      <boxGeometry args={[0.24, uH, uD]} />
+                      <meshBasicMaterial color="#c084fc" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "right" ? 0.45 : 0.2} />
                       <Edges threshold={1} color="#c084fc" />
                     </mesh>
                     <Html position={[0, 0, uD / 2 + 0.04]} center>
@@ -3361,7 +3439,7 @@ export default function FurnitureMesh({
                   castShadow
                   material={mainMaterial}
                 >
-                  <boxGeometry args={[totalMainW - 0.01, plinthH, 0.018]} />
+                  <boxGeometry args={[totalMainW, plinthH, 0.018]} />
                   <Edges threshold={15} color={edgeColor} />
                 </mesh>
                 {/* Side returns */}
@@ -3877,7 +3955,7 @@ export default function FurnitureMesh({
                             width={uW - 0.006}
                             height={dh - 0.004}
                             thickness={0.018}
-                            doorStyle={unit.doorStyle || params.doorStyle}
+                            doorStyle={unit.doorStyle || "slab"}
                             material={uMat}
                             frameMaterial={handleMaterial}
                             handleType={unit.handleType}
@@ -3887,7 +3965,7 @@ export default function FurnitureMesh({
                           <mesh position={[0, -0.01, -innerD * 0.45]} material={uMat}>
                             <boxGeometry args={[uW - t * 2 - 0.03, dh * 0.8, innerD * 0.85]} />
                           </mesh>
-                          {renderHandle([0, 0, 0.01], false, 0, unit.handleType || "edgePull", unit.handleFinish || "black", { drawerWidth: uW })}
+                          {renderHandle([0, 0, 0.009], false, 0, unit.handleType || "edgePull", unit.handleFinish || "black", { drawerWidth: uW })}
                         </group>
                       );
                     })}
@@ -3928,7 +4006,7 @@ export default function FurnitureMesh({
                             <mesh position={[0, 0, -(innerD * 0.8) / 2]} material={uMat}>
                               <boxGeometry args={[drawerW - 0.03, dh * 0.8, innerD * 0.8]} />
                             </mesh>
-                            {renderHandle([0, dh * 0.2, 0.01], false, 0, "cutout", unit.handleFinish || "black")}
+                            {renderHandle([0, dh * 0.2, 0.009], false, 0, "cutout", unit.handleFinish || "black")}
                           </group>
                         );
                       })}
@@ -3983,7 +4061,7 @@ export default function FurnitureMesh({
                                   width={panelW - 0.044}
                                   height={panelH}
                                   thickness={0.018}
-                                  doorStyle={unit.doorStyle || params.doorStyle}
+                                  doorStyle={unit.doorStyle || "slab"}
                                   material={uMat}
                                   frameMaterial={handleMaterial}
                                   edgeColor={edgeColor}
@@ -4007,7 +4085,7 @@ export default function FurnitureMesh({
                                   width={panelW - 0.044}
                                   height={panelH}
                                   thickness={0.018}
-                                  doorStyle={unit.doorStyle || params.doorStyle}
+                                  doorStyle={unit.doorStyle || "slab"}
                                   material={uMat}
                                   frameMaterial={handleMaterial}
                                   edgeColor={edgeColor}
@@ -4074,7 +4152,7 @@ export default function FurnitureMesh({
                               width={uW - 0.004}
                               height={doorAreaH}
                               thickness={0.018}
-                              doorStyle={unit.doorStyle || params.doorStyle}
+                              doorStyle={unit.doorStyle || "slab"}
                               material={uMat}
                               frameMaterial={handleMaterial}
                               handleType={unit.handleType}
@@ -4096,7 +4174,7 @@ export default function FurnitureMesh({
                               </group>
                             )}
 
-                            {renderHandle([uW - 0.04, 0, 0.02], true, 0, unit.handleType || "bar", unit.handleFinish || "black", { doorHeight: doorAreaH })}
+                            {renderHandle([uW - 0.04, 0, 0.018], true, 0, unit.handleType || "bar", unit.handleFinish || "black", { doorHeight: doorAreaH })}
                           </group>
                         );
                       })()
@@ -4113,7 +4191,7 @@ export default function FurnitureMesh({
                                 width={halfW - 0.003}
                                 height={doorAreaH}
                                 thickness={0.018}
-                                doorStyle={unit.doorStyle || params.doorStyle}
+                                doorStyle={unit.doorStyle || "slab"}
                                 material={uMat}
                                 frameMaterial={handleMaterial}
                                 handleType={unit.handleType}
@@ -4133,7 +4211,7 @@ export default function FurnitureMesh({
                                   </mesh>
                                 </group>
                               )}
-                              {renderHandle([halfW - 0.035, 0, 0.02], true, 0, unit.handleType || "bar", unit.handleFinish || "black", { isRightDoor: false, doorHeight: doorAreaH })}
+                              {renderHandle([halfW - 0.035, 0, 0.018], true, 0, unit.handleType || "bar", unit.handleFinish || "black", { isRightDoor: false, doorHeight: doorAreaH })}
                             </group>
                             {/* Right Door */}
                             <group position={[halfW, 0, 0]} rotation={[0, angleRad, 0]}>
@@ -4141,7 +4219,7 @@ export default function FurnitureMesh({
                                 width={halfW - 0.003}
                                 height={doorAreaH}
                                 thickness={0.018}
-                                doorStyle={unit.doorStyle || params.doorStyle}
+                                doorStyle={unit.doorStyle || "slab"}
                                 material={uMat}
                                 frameMaterial={handleMaterial}
                                 handleType={unit.handleType}
@@ -4161,7 +4239,7 @@ export default function FurnitureMesh({
                                   </mesh>
                                 </group>
                               )}
-                              {renderHandle([-halfW + 0.035, 0, 0.02], true, 0, unit.handleType || "bar", unit.handleFinish || "black", { isRightDoor: true, doorHeight: doorAreaH })}
+                              {renderHandle([-halfW + 0.035, 0, 0.018], true, 0, unit.handleType || "bar", unit.handleFinish || "black", { isRightDoor: true, doorHeight: doorAreaH })}
                             </group>
                           </group>
                         );
@@ -4187,7 +4265,7 @@ export default function FurnitureMesh({
                         onAddAdjacentWardrobeUnit?.(unit.id, "left");
                       }}
                     >
-                      <boxGeometry args={[0.2, uH, uD]} />
+                      <boxGeometry args={[0.36, uH, uD]} />
                       <meshBasicMaterial transparent opacity={0} />
                     </mesh>
 
@@ -4204,7 +4282,7 @@ export default function FurnitureMesh({
                         onAddAdjacentWardrobeUnit?.(unit.id, "right");
                       }}
                     >
-                      <boxGeometry args={[0.2, uH, uD]} />
+                      <boxGeometry args={[0.36, uH, uD]} />
                       <meshBasicMaterial transparent opacity={0} />
                     </mesh>
 
@@ -4431,7 +4509,7 @@ export default function FurnitureMesh({
                       width={uW - 0.004}
                       height={uH - 0.004}
                       thickness={0.018}
-                      doorStyle={topU.doorStyle || params.doorStyle}
+                      doorStyle={topU.doorStyle || "slab"}
                       material={topUMat}
                       frameMaterial={handleMaterial}
                       handleType={topU.handleType}
@@ -4467,14 +4545,19 @@ export default function FurnitureMesh({
 
         if (category === "Cabinet") {
           const kUnits = kitchenUnits && kitchenUnits.length > 0 ? kitchenUnits : [{ width: 600, height: 720, depth: 600, type: "base" }];
-          const bUnits = kUnits.filter(u => u.type === "base" || u.type === "corner-base");
+          const bUnits = kUnits.filter(u => u.type !== "wall" && u.type !== "corner-wall");
           const wUnits = kUnits.filter(u => u.type === "wall" || u.type === "corner-wall");
-          const pBaseH = baseType === "floating" ? 0 : (plinthHeight || 80);
-          totalDimW = bUnits.length > 0 ? bUnits.reduce((acc, u) => acc + u.width, 0) : 600;
-          const maxBaseH = bUnits.length > 0 ? Math.max(...bUnits.map(u => u.height)) : 720;
-          const maxWallH = wUnits.length > 0 ? Math.max(...wUnits.map(u => u.height)) : 0;
-          const cTopThick = tableTopThickness || 30;
-          totalDimH = pBaseH + maxBaseH + (wUnits.length > 0 ? cTopThick + 600 + maxWallH : 0);
+          const pBaseH = baseType === "floating" ? 0 : (plinthHeight ?? 80);
+          const cornerIndex = bUnits.findIndex((u) => u.type === "corner-base" || u.orientation === "corner-right" || u.orientation === "corner-left");
+          const run0Units = cornerIndex < 0 ? bUnits : bUnits.slice(0, cornerIndex + 1);
+          totalDimW = run0Units.reduce((acc, u) => acc + u.width, 0) || 600;
+          const standardBaseUnits = bUnits.filter((u) => u.type !== "tall" && u.type !== "fridge");
+          const maxBaseH = standardBaseUnits.length > 0 ? Math.max(...standardBaseUnits.map((u) => u.height)) : 720;
+          const maxTallTop = bUnits.reduce((max, u) => u.type === "tall" || u.type === "fridge" ? Math.max(max, u.height) : max, 0);
+          const hasCountertop = Boolean(params.hasCountertop);
+          const countertopH = hasCountertop ? (params.countertopThickness ?? tableTopThickness ?? 30) : 0;
+          const wallTop = wUnits.reduce((max, u) => Math.max(max, pBaseH + maxBaseH + countertopH + (u.bottomOffset ?? 600) + u.height), 0);
+          totalDimH = Math.max(pBaseH + maxBaseH + countertopH, pBaseH + maxTallTop, wallTop);
           totalDimD = bUnits.length > 0 ? Math.max(...bUnits.map(u => u.depth)) : 600;
         } else if (category === "Wardrobe") {
           const wUnits = wardrobeUnits && wardrobeUnits.length > 0 ? wardrobeUnits : [{ width: 900, height: 2100, depth: 600, type: "main" }];

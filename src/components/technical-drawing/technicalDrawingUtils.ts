@@ -66,12 +66,37 @@ export function formatDim(valueMm: number, unit: "mm" | "cm" = "mm", includeUnit
   return includeUnit ? `${rounded} mm` : rounded.toString();
 }
 
+export interface KitchenUnitLayoutItem {
+  unit: KitchenCabinetUnit;
+  x: number;
+  y: number;
+  z: number;
+  width: number;
+  height: number;
+  depth: number;
+  isCorner: boolean;
+  runIndex: number; // 0 = main run along X, 1 = turned run along Z
+  rotationY: number; // 0 for Run 0, -Math.PI / 2 for Run 1
+}
+
 export interface KitchenDrawingData {
   baseUnits: KitchenCabinetUnit[];
   wallUnits: KitchenCabinetUnit[];
+  run0BaseUnits: KitchenCabinetUnit[];
+  run1BaseUnits: KitchenCabinetUnit[];
+  run0WallUnits: KitchenCabinetUnit[];
+  run1WallUnits: KitchenCabinetUnit[];
+  cornerBaseUnit?: KitchenCabinetUnit;
+  cornerWallUnit?: KitchenCabinetUnit;
+  hasCorner: boolean;
+  baseLayout: KitchenUnitLayoutItem[];
+  wallLayout: KitchenUnitLayoutItem[];
   plinthH: number;
+  hasCountertop: boolean;
   countertopThick: number;
   splashH: number;
+  run0Width: number;
+  run1Depth: number;
   totalBaseW: number;
   totalWallW: number;
   maxBaseH: number;
@@ -141,31 +166,202 @@ export function getKitchenData(params: FurnitureParams): KitchenDrawingData {
         },
       ];
 
-  const baseUnits = units.filter((u) => u.type === "base" || u.type === "corner-base");
+  const baseUnits = units.filter((u) => u.type !== "wall" && u.type !== "corner-wall");
   const wallUnits = units.filter((u) => u.type === "wall" || u.type === "corner-wall");
   const plinthH = params.baseType === "floating" ? 0 : (params.plinthHeight ?? 80);
-  const countertopThick = params.tableTopThickness || 30;
+  const hasCountertop = Boolean(params.hasCountertop);
+  const countertopThick = hasCountertop ? (params.countertopThickness ?? params.tableTopThickness ?? 30) : 0;
   const splashH = wallUnits.length > 0 && wallUnits[0].bottomOffset !== undefined
     ? wallUnits[0].bottomOffset
     : 600; // Standard 600mm backsplash clearance gap (Turkish standard tezgah arası)
 
-  const totalBaseW = baseUnits.reduce((acc, u) => acc + u.width, 0);
-  const totalWallW = wallUnits.reduce((acc, u) => acc + u.width, 0);
-  const maxBaseH = baseUnits.length > 0 ? Math.max(...baseUnits.map((u) => u.height)) : 720;
-  const maxWallH = wallUnits.length > 0 ? Math.max(...wallUnits.map((u) => u.height)) : 720;
-  const baseDepth = baseUnits.length > 0 ? Math.max(...baseUnits.map((u) => u.depth || 600)) : 600;
-  const wallDepth = wallUnits.length > 0 ? Math.max(...wallUnits.map((u) => u.depth || 350)) : 350;
+  const STD_BASE_DEPTH = 600;
+  const STD_WALL_DEPTH = 350;
 
+  // Layout Base Cabinets (Run 0 along X, 90° Corner unit, Run 1 along Z)
+  const baseLayout: KitchenUnitLayoutItem[] = [];
+  const run0BaseUnits: KitchenCabinetUnit[] = [];
+  const run1BaseUnits: KitchenCabinetUnit[] = [];
+  let cornerBaseUnit: KitchenCabinetUnit | undefined = undefined;
+  let hasCorner = false;
+  let curRun = 0;
+  let cursorX = 0;
+  let cursorZ = 0;
+  let cornerOuterX = 0;
+  let cornerW = 900;
+  let cornerD = 900;
+
+  for (let i = 0; i < baseUnits.length; i++) {
+    const u = baseUnits[i];
+    const isCorner = u.type === "corner-base" || u.orientation === "corner-right" || u.orientation === "corner-left";
+    const uW = u.width || (isCorner ? 900 : 600);
+    const uH = u.height || 720;
+    const uD = isCorner ? (u.depth || 900) : (u.depth || STD_BASE_DEPTH);
+
+    if (!isCorner && curRun === 0) {
+      run0BaseUnits.push(u);
+      baseLayout.push({
+        unit: u,
+        x: cursorX,
+        y: plinthH,
+        z: 0,
+        width: uW,
+        height: uH,
+        depth: uD,
+        isCorner: false,
+        runIndex: 0,
+        rotationY: 0,
+      });
+      cursorX += uW;
+    } else if (isCorner) {
+      hasCorner = true;
+      cornerBaseUnit = u;
+      cornerW = uW;
+      cornerD = uD;
+      cornerOuterX = cursorX + cornerW;
+      baseLayout.push({
+        unit: u,
+        x: cursorX,
+        y: plinthH,
+        z: 0,
+        width: cornerW,
+        height: uH,
+        depth: cornerD,
+        isCorner: true,
+        runIndex: 0,
+        rotationY: 0,
+      });
+      curRun = 1;
+      cursorZ = cornerD; // run 1 starts after the corner unit depth along Z
+    } else if (!isCorner && curRun === 1) {
+      run1BaseUnits.push(u);
+      baseLayout.push({
+        unit: u,
+        x: cornerOuterX - uD,
+        y: plinthH,
+        z: cursorZ,
+        width: uW,
+        height: uH,
+        depth: uD,
+        isCorner: false,
+        runIndex: 1,
+        rotationY: -Math.PI / 2,
+      });
+      cursorZ += uW;
+    }
+  }
+
+  const run0Width = hasCorner ? cornerOuterX : (cursorX || 600);
+  const run1Depth = hasCorner ? (cursorZ || cornerD) : STD_BASE_DEPTH;
+
+  // Layout Wall Cabinets (Run 0 along X, 90° Corner unit, Run 1 along Z)
+  const standardBaseUnits = baseUnits.filter((u) => u.type !== "tall" && u.type !== "fridge");
+  const maxBaseH = standardBaseUnits.length > 0 ? Math.max(...standardBaseUnits.map((u) => u.height)) : 720;
+  const maxWallH = wallUnits.length > 0 ? Math.max(...wallUnits.map((u) => u.height)) : 720;
+
+  const wallLayout: KitchenUnitLayoutItem[] = [];
+  const run0WallUnits: KitchenCabinetUnit[] = [];
+  const run1WallUnits: KitchenCabinetUnit[] = [];
+  let cornerWallUnit: KitchenCabinetUnit | undefined = undefined;
+  let wallCurRun = 0;
+  let wallCursorX = 0;
+  let wallCursorZ = 0;
+
+  for (let i = 0; i < wallUnits.length; i++) {
+    const u = wallUnits[i];
+    const isCornerWall = u.type === "corner-wall";
+    const isRun1Explicit = u.runAxis === "run1";
+    if (isRun1Explicit && wallCurRun === 0) {
+      wallCurRun = 1;
+      if (wallCursorZ === 0) {
+        wallCursorZ = hasCorner ? cornerD : STD_WALL_DEPTH;
+      }
+    }
+    const uW = u.width || (isCornerWall ? 600 : 600);
+    const uH = u.height || 720;
+    const uD = isCornerWall ? (u.depth || 600) : (u.depth || STD_WALL_DEPTH);
+    const clearance = u.bottomOffset !== undefined ? u.bottomOffset : splashH;
+    const wuY = plinthH + maxBaseH + countertopThick + clearance;
+
+    if (!isCornerWall && wallCurRun === 0) {
+      run0WallUnits.push(u);
+      wallLayout.push({
+        unit: u,
+        x: wallCursorX,
+        y: wuY,
+        z: 0,
+        width: uW,
+        height: uH,
+        depth: uD,
+        isCorner: false,
+        runIndex: 0,
+        rotationY: 0,
+      });
+      wallCursorX += uW;
+    } else if (isCornerWall) {
+      cornerWallUnit = u;
+      const cornerWallOuterX = hasCorner ? cornerOuterX : (wallCursorX + uW);
+      wallLayout.push({
+        unit: u,
+        x: cornerWallOuterX - uW,
+        y: wuY,
+        z: 0,
+        width: uW,
+        height: uH,
+        depth: uD,
+        isCorner: true,
+        runIndex: 0,
+        rotationY: 0,
+      });
+      wallCurRun = 1;
+      wallCursorZ = uD;
+    } else if (!isCornerWall && wallCurRun === 1) {
+      run1WallUnits.push(u);
+      const wallXPos = hasCorner ? (cornerOuterX - uD) : (wallCursorX > 0 ? wallCursorX - uD : 0);
+      wallLayout.push({
+        unit: u,
+        x: wallXPos,
+        y: wuY,
+        z: wallCursorZ,
+        width: uW,
+        height: uH,
+        depth: uD,
+        isCorner: false,
+        runIndex: 1,
+        rotationY: -Math.PI / 2,
+      });
+      wallCursorZ += uW;
+    }
+  }
+
+  const totalBaseW = run0Width;
+  const totalWallW = wallCursorX || run0Width;
+  const baseDepth = STD_BASE_DEPTH;
+  const wallDepth = STD_WALL_DEPTH;
   const totalH = plinthH + maxBaseH + countertopThick + (wallUnits.length > 0 ? splashH + maxWallH : 0);
-  const totalW = Math.max(totalBaseW, totalWallW, 600);
-  const totalD = baseDepth + 20;
+  const totalW = Math.max(run0Width, 600);
+  const totalD = hasCorner
+    ? Math.max(run1Depth + (hasCountertop ? 20 : 0), STD_BASE_DEPTH + (hasCountertop ? 20 : 0))
+    : (STD_BASE_DEPTH + (hasCountertop ? 20 : 0));
 
   return {
     baseUnits,
     wallUnits,
+    run0BaseUnits,
+    run1BaseUnits,
+    run0WallUnits,
+    run1WallUnits,
+    cornerBaseUnit,
+    cornerWallUnit,
+    hasCorner,
+    baseLayout,
+    wallLayout,
     plinthH,
+    hasCountertop,
     countertopThick,
     splashH,
+    run0Width,
+    run1Depth,
     totalBaseW,
     totalWallW,
     maxBaseH,
@@ -246,28 +442,33 @@ export function generateFrontElevation(params: FurnitureParams, unit: "mm" | "cm
     const kd = getKitchenData(params);
 
     // Continuous Plinth / Toe Kick
-    if (kd.plinthH > 0 && kd.totalBaseW > 0) {
+    if (kd.plinthH > 0 && kd.run0Width > 0) {
       rects.push({
         id: "plinth-front",
         x: 0,
         y: 0,
-        width: kd.totalBaseW,
+        width: kd.run0Width,
         height: kd.plinthH,
         type: "outline",
       });
     }
 
-    // Base Cabinets (Doors Hidden)
+    // Base Cabinets on Front Facade (Run 0 base units + Corner base unit)
+    const frontBaseUnits = [...kd.run0BaseUnits, ...(kd.cornerBaseUnit ? [kd.cornerBaseUnit] : [])];
     let curX = 0;
-    kd.baseUnits.forEach((u, uIdx) => {
+    frontBaseUnits.forEach((u, uIdx) => {
       const uY = kd.plinthH;
+      const isCorner = u.type === "corner-base" || u.orientation === "corner-right" || u.orientation === "corner-left";
+      const uW = u.width;
+      const uH = u.height;
+
       // Outer Carcass
       rects.push({
         id: `base-carcass-${uIdx}`,
         x: curX,
         y: uY,
-        width: u.width,
-        height: u.height,
+        width: uW,
+        height: uH,
         type: "outline",
       });
       // Left Gable
@@ -276,46 +477,68 @@ export function generateFrontElevation(params: FurnitureParams, unit: "mm" | "cm
         x: curX,
         y: uY,
         width: t,
-        height: u.height,
+        height: uH,
         type: "interior",
       });
       // Right Gable
       rects.push({
         id: `base-rightGable-${uIdx}`,
-        x: curX + u.width - t,
+        x: curX + uW - t,
         y: uY,
         width: t,
-        height: u.height,
+        height: uH,
         type: "interior",
       });
-      // Bottom Panel
-      rects.push({
-        id: `base-bottomPanel-${uIdx}`,
-        x: curX + t,
-        y: uY,
-        width: u.width - t * 2,
-        height: t,
-        type: "interior",
-      });
+      // Bottom Panel (omitted for floor-sitting appliances / fridge / dishwasher)
+      if (!u.hasNoBottom && u.type !== "fridge" && u.type !== "dishwasher") {
+        rects.push({
+          id: `base-bottomPanel-${uIdx}`,
+          x: curX + t,
+          y: uY,
+          width: uW - t * 2,
+          height: t,
+          type: "interior",
+        });
+      }
       // Top Rail / Panel
       rects.push({
         id: `base-topPanel-${uIdx}`,
         x: curX + t,
-        y: uY + u.height - t,
-        width: u.width - t * 2,
+        y: uY + uH - t,
+        width: uW - t * 2,
         height: t,
         type: "interior",
       });
 
-      // Internal Drawers or Shelves (Doors Hidden)
-      if (u.drawerCount > 0) {
+      if (isCorner) {
+        // Corner unit interior: return partition / blank panel demarcation line
+        const armD = u.cornerDepth || 600;
+        const returnPartX = curX + (uW - armD);
+        rects.push({
+          id: `base-corner-part-${uIdx}`,
+          x: returnPartX,
+          y: uY + t,
+          width: t,
+          height: uH - t * 2,
+          type: "interior",
+        });
+        // Internal corner shelf across front arm
+        rects.push({
+          id: `base-corner-shelf-${uIdx}`,
+          x: curX + t,
+          y: uY + uH / 2,
+          width: uW - t * 2,
+          height: t,
+          type: "interior",
+        });
+      } else if (u.drawerCount > 0) {
         const dCount = u.drawerCount;
-        const dH = (u.height - t * 2) / dCount;
-        const curDoorStyle = u.doorStyle || params.doorStyle;
+        const dH = (uH - t * 2) / dCount;
+        const curDoorStyle = u.doorStyle || "slab";
         for (let di = 0; di < dCount; di++) {
           const dx = curX + t + 2;
           const dy = uY + t + di * dH + 2;
-          const dw = u.width - t * 2 - 4;
+          const dw = uW - t * 2 - 4;
           const dh = dH - 4;
           rects.push({
             id: `base-drawer-${uIdx}-${di}`,
@@ -367,54 +590,102 @@ export function generateFrontElevation(params: FurnitureParams, unit: "mm" | "cm
         }
       } else if (u.internalShelves > 0) {
         const sCount = u.internalShelves;
-        const sGap = (u.height - t * 2 - sCount * t) / (sCount + 1);
+        const sGap = (uH - t * 2 - sCount * t) / (sCount + 1);
         for (let si = 0; si < sCount; si++) {
           const sy = uY + t + (si + 1) * sGap + si * t;
           rects.push({
             id: `base-shelf-${uIdx}-${si}`,
             x: curX + t,
             y: sy,
-            width: u.width - t * 2,
+            width: uW - t * 2,
             height: t,
             type: "interior",
           });
         }
       }
 
-      // Unit Width Dimension
-      dimensions.push({
-        id: `dim-unit-w-${uIdx}`,
-        x1: curX,
-        y1: -22,
-        x2: curX + u.width,
-        y2: -22,
-        refX1: curX,
-        refY1: 0,
-        refX2: curX + u.width,
-        refY2: 0,
-        value: u.width,
-        text: formatDim(u.width, unit),
-        orientation: "horizontal",
-      });
+      // Unit Width Dimension - ONLY if there are multiple units on the front facade
+      if (frontBaseUnits.length > 1) {
+        dimensions.push({
+          id: `dim-unit-w-${uIdx}`,
+          x1: curX,
+          y1: -35,
+          x2: curX + uW,
+          y2: -35,
+          refX1: curX,
+          refY1: 0,
+          refX2: curX + uW,
+          refY2: 0,
+          value: uW,
+          text: formatDim(uW, unit),
+          orientation: "horizontal",
+        });
+      }
 
-      curX += u.width;
+      curX += uW;
     });
 
-    // Continuous Countertop Slab
+    // Countertop Slabs (segmented: skips tall units, fridges, and units with hasNoCountertop)
     const ctY = kd.plinthH + kd.maxBaseH;
-    rects.push({
-      id: "countertop-front",
-      x: -10,
-      y: ctY,
-      width: kd.totalBaseW + 20,
-      height: kd.countertopThick,
-      type: "outline",
-    });
+    if (kd.hasCountertop && kd.countertopThick > 0) {
+      let segStartX: number | null = null;
+      let segEndX = 0;
+      let runningX = 0;
+      frontBaseUnits.forEach((u, idx) => {
+        const needsCt = !u.hasNoCountertop && u.type !== "tall" && u.type !== "fridge";
+        if (needsCt) {
+          if (segStartX === null) segStartX = runningX;
+          segEndX = runningX + u.width;
+        } else {
+          if (segStartX !== null) {
+            const leftOverhang = segStartX === 0 ? 10 : 0;
+            rects.push({
+              id: `countertop-front-${idx}`,
+              x: segStartX - leftOverhang,
+              y: ctY,
+              width: (segEndX - segStartX) + leftOverhang,
+              height: kd.countertopThick,
+              type: "outline",
+            });
+            segStartX = null;
+          }
+        }
+        runningX += u.width;
+      });
+      if (segStartX !== null) {
+        const leftOverhang = segStartX === 0 ? 10 : 0;
+        const rightOverhang = segEndX >= kd.run0Width - 1 ? 10 : 0;
+        rects.push({
+          id: "countertop-front-end",
+          x: segStartX - leftOverhang,
+          y: ctY,
+          width: (segEndX - segStartX) + leftOverhang + rightOverhang,
+          height: kd.countertopThick,
+          type: "outline",
+        });
+      }
+    }
 
-    // Wall Cabinets
-    if (kd.wallUnits.length > 0) {
+    // Wall Cabinets on Front Facade
+    const frontWallUnits = [...kd.run0WallUnits, ...(kd.cornerWallUnit ? [kd.cornerWallUnit] : [])];
+
+    // Optional Backsplash Wall Cladding Panel (covers wall between base/countertop and wall units)
+    if (params.hasBacksplash && frontWallUnits.length > 0) {
+      const bsY1 = ctY + (kd.hasCountertop ? kd.countertopThick : 0);
+      const bsY2 = ctY + kd.countertopThick + (frontWallUnits[0].bottomOffset !== undefined ? frontWallUnits[0].bottomOffset : kd.splashH);
+      rects.push({
+        id: "backsplash-front",
+        x: 0,
+        y: bsY1,
+        width: kd.run0Width,
+        height: Math.max(10, bsY2 - bsY1),
+        type: "interior",
+      });
+    }
+
+    if (frontWallUnits.length > 0) {
       let curWallX = 0;
-      kd.wallUnits.forEach((wu, wuIdx) => {
+      frontWallUnits.forEach((wu, wuIdx) => {
         const wuY = ctY + kd.countertopThick + (wu.bottomOffset !== undefined ? wu.bottomOffset : kd.splashH);
         rects.push({
           id: `wall-carcass-${wuIdx}`,
@@ -473,32 +744,34 @@ export function generateFrontElevation(params: FurnitureParams, unit: "mm" | "cm
       });
     }
 
-    // Overall Dimensions
+    // Overall Total Width Dimension
+    const totalWDimY = frontBaseUnits.length > 1 ? -85 : -40;
     dimensions.push({
       id: "dim-total-w",
       x1: 0,
-      y1: -48,
-      x2: kd.totalBaseW,
-      y2: -48,
+      y1: totalWDimY,
+      x2: kd.run0Width,
+      y2: totalWDimY,
       refX1: 0,
       refY1: 0,
-      refX2: kd.totalBaseW,
+      refX2: kd.run0Width,
       refY2: 0,
-      value: kd.totalBaseW,
-      text: formatDim(kd.totalBaseW, unit, true),
+      value: kd.run0Width,
+      text: formatDim(kd.run0Width, unit, true),
       orientation: "horizontal",
     });
 
+    // Overall Height Dimension (Right side)
     dimensions.push({
       id: "dim-total-h",
-      x1: kd.totalBaseW + 35,
+      x1: kd.run0Width + 35,
       y1: 0,
-      x2: kd.totalBaseW + 35,
+      x2: kd.run0Width + 35,
       y2: kd.totalH,
-      refX1: kd.totalBaseW,
+      refX1: kd.run0Width,
       refY1: 0,
-      refX2: kd.totalBaseW,
-      refY2: 0,
+      refX2: kd.run0Width,
+      refY2: kd.totalH, // Fixed: was 0 causing diagonal crooked witness line
       value: kd.totalH,
       text: formatDim(kd.totalH, unit, true),
       orientation: "vertical",
@@ -522,7 +795,7 @@ export function generateFrontElevation(params: FurnitureParams, unit: "mm" | "cm
     }
 
     return {
-      width: kd.totalBaseW,
+      width: kd.run0Width,
       height: kd.totalH,
       rects,
       lines,
@@ -615,7 +888,7 @@ export function generateFrontElevation(params: FurnitureParams, unit: "mm" | "cm
             });
           }
         } else {
-          const curDoorStyle = u.doorStyle || params.doorStyle;
+          const curDoorStyle = u.doorStyle || "slab";
           for (let di = 0; di < dCount; di++) {
             const dx = curX + t + 2;
             const dy = uY + t + di * dH + 2;
@@ -1084,116 +1357,357 @@ export function generatePlanTopView(params: FurnitureParams, unit: "mm" | "cm" =
 
   if (params.category === "Cabinet") {
     const kd = getKitchenData(params);
-    const ctD = kd.baseDepth + 20;
+    const ctD = kd.hasCountertop ? 620 : kd.baseDepth;
 
-    // 1. Continuous Countertop Slab (overhang 10mm sides, 20mm front)
-    rects.push({
-      id: "plan-countertop",
-      x: -10,
-      y: 0,
-      width: kd.totalBaseW + 20,
-      height: ctD,
-      type: "outline",
-    });
+    if (kd.hasCorner) {
+      // -----------------------------------------------------------
+      // L-SHAPED KITCHEN PLAN VIEW
+      // -----------------------------------------------------------
+      // 1. L-Shaped Countertop Outline (if enabled)
+      if (kd.hasCountertop) {
+        // Main Run countertop slab along X (overhang 10mm left, 20mm front)
+        rects.push({
+          id: "plan-countertop-main",
+          x: -10,
+          y: 0,
+          width: kd.run0Width + 20,
+          height: ctD,
+          type: "outline",
+        });
+        // Return Run countertop slab along Z (turned downwards in plan, 10mm bottom overhang)
+        const returnSlabH = Math.max(10, kd.run1Depth - ctD + 10);
+        rects.push({
+          id: "plan-countertop-return",
+          x: kd.run0Width - ctD,
+          y: ctD,
+          width: ctD,
+          height: returnSlabH,
+          type: "outline",
+        });
+        // Countertop joint seam (45° miter joint line)
+        lines.push({
+          id: "plan-countertop-seam",
+          x1: kd.run0Width - ctD,
+          y1: ctD,
+          x2: kd.run0Width,
+          y2: 0,
+          type: "interior",
+        });
+      }
 
-    // 2. Base Cabinets Underneath (joinery details)
-    let curX = 0;
-    kd.baseUnits.forEach((u, idx) => {
-      const uD = u.depth || kd.baseDepth;
-      // Carcass outline
-      rects.push({ id: `plan-cab-${idx}`, x: curX, y: 0, width: u.width, height: uD, type: "interior" });
-      // Left side gable
-      rects.push({ id: `plan-cab-ls-${idx}`, x: curX, y: 0, width: t, height: uD, type: "interior" });
-      // Right side gable
-      rects.push({ id: `plan-cab-rs-${idx}`, x: curX + u.width - t, y: 0, width: t, height: uD, type: "interior" });
-      // Back panel line (recessed by 20mm)
-      lines.push({ id: `plan-cab-back-${idx}`, x1: curX + t, y1: 20, x2: curX + u.width - t, y2: 20, type: "interior" });
+      // 2. Base Cabinets Underneath (joinery details)
+      // Run 0 Base Units
+      const run0Units = kd.baseLayout.filter((item) => !item.isCorner && item.runIndex === 0);
+      run0Units.forEach((item, idx) => {
+        rects.push({ id: `plan-cab-r0-${idx}`, x: item.x, y: 0, width: item.width, height: item.depth, type: "interior" });
+        rects.push({ id: `plan-cab-r0-ls-${idx}`, x: item.x, y: 0, width: t, height: item.depth, type: "interior" });
+        rects.push({ id: `plan-cab-r0-rs-${idx}`, x: item.x + item.width - t, y: 0, width: t, height: item.depth, type: "interior" });
+        lines.push({ id: `plan-cab-r0-back-${idx}`, x1: item.x + t, y1: 20, x2: item.x + item.width - t, y2: 20, type: "interior" });
 
-      // Unit Width dimension
+        if (run0Units.length > 1) {
+          dimensions.push({
+            id: `plan-dim-r0-${idx}`,
+            x1: item.x,
+            y1: -30,
+            x2: item.x + item.width,
+            y2: -30,
+            refX1: item.x,
+            refY1: 0,
+            refX2: item.x + item.width,
+            refY2: 0,
+            value: item.width,
+            text: formatDim(item.width, unit),
+            orientation: "horizontal",
+          });
+        }
+      });
+
+      // 90° Corner Base Unit
+      const corItem = kd.baseLayout.find((item) => item.isCorner);
+      if (corItem) {
+        const corX = corItem.x;
+        const armD = corItem.unit.cornerDepth || 600;
+        const corW = corItem.width;
+        const corD = corItem.depth;
+        const frontArmW = corW - armD;
+
+        // L-shaped carcass panels
+        rects.push({ id: "plan-cor-arm1", x: corX, y: 0, width: frontArmW, height: armD, type: "interior" });
+        rects.push({ id: "plan-cor-arm2", x: corX + frontArmW, y: 0, width: armD, height: corD, type: "interior" });
+        rects.push({ id: "plan-cor-ls", x: corX, y: 0, width: t, height: armD, type: "interior" });
+        rects.push({ id: "plan-cor-rs", x: corX + corW - t, y: 0, width: t, height: corD, type: "interior" });
+        rects.push({ id: "plan-cor-bs", x: corX + frontArmW, y: corD - t, width: armD, height: t, type: "interior" });
+
+        // Wall backboards
+        lines.push({ id: "plan-cor-back-x", x1: corX + t, y1: 20, x2: corX + corW - 20, y2: 20, type: "interior" });
+        lines.push({ id: "plan-cor-back-z", x1: corX + corW - 20, y1: 20, x2: corX + corW - 20, y2: corD - t, type: "interior" });
+
+        // Bi-fold corner door lines meeting at 90°
+        lines.push({ id: "plan-cor-door-x", x1: corX, y1: armD, x2: corX + frontArmW, y2: armD, type: "outline" });
+        lines.push({ id: "plan-cor-door-z", x1: corX + frontArmW, y1: armD, x2: corX + frontArmW, y2: corD, type: "outline" });
+      }
+
+      // Run 1 Base Units (Turned along Z, facing -X into room)
+      const run1Units = kd.baseLayout.filter((item) => !item.isCorner && item.runIndex === 1);
+      run1Units.forEach((item, idx) => {
+        const cabX = kd.run0Width - item.depth;
+        rects.push({ id: `plan-cab-r1-${idx}`, x: cabX, y: item.z, width: item.depth, height: item.width, type: "interior" });
+        rects.push({ id: `plan-cab-r1-ts-${idx}`, x: cabX, y: item.z, width: item.depth, height: t, type: "interior" });
+        rects.push({ id: `plan-cab-r1-bs-${idx}`, x: cabX, y: item.z + item.width - t, width: item.depth, height: t, type: "interior" });
+        lines.push({ id: `plan-cab-r1-back-${idx}`, x1: kd.run0Width - 20, y1: item.z + t, x2: kd.run0Width - 20, y2: item.z + item.width - t, type: "interior" });
+        lines.push({ id: `plan-cab-r1-door-${idx}`, x1: cabX, y1: item.z, x2: cabX, y2: item.z + item.width, type: "outline" });
+
+        if (run1Units.length > 1) {
+          dimensions.push({
+            id: `plan-dim-r1-${idx}`,
+            x1: kd.run0Width + 30,
+            y1: item.z,
+            x2: kd.run0Width + 30,
+            y2: item.z + item.width,
+            refX1: kd.run0Width,
+            refY1: item.z,
+            refX2: kd.run0Width,
+            refY2: item.z + item.width,
+            value: item.width,
+            text: formatDim(item.width, unit),
+            orientation: "vertical",
+          });
+        }
+      });
+
+      // 3. Overhead Wall Cabinets projection (dashed hidden lines)
+      kd.wallLayout.forEach((item, wIdx) => {
+        if (item.isCorner) {
+          rects.push({
+            id: `plan-wall-cor-${wIdx}`,
+            x: item.x,
+            y: 0,
+            width: item.width,
+            height: item.depth,
+            type: "hidden",
+          });
+        } else if (item.runIndex === 0) {
+          rects.push({
+            id: `plan-wall-r0-${wIdx}`,
+            x: item.x,
+            y: 0,
+            width: item.width,
+            height: item.depth,
+            type: "hidden",
+          });
+        } else {
+          rects.push({
+            id: `plan-wall-r1-${wIdx}`,
+            x: item.x,
+            y: item.z,
+            width: item.depth,
+            height: item.width,
+            type: "hidden",
+          });
+        }
+      });
+
+      // 4. Dimensions
+      // Main Run Width (along X at bottom)
+      const mainWDimY = run0Units.length > 1 ? -80 : -45;
       dimensions.push({
-        id: `plan-dim-u-${idx}`,
-        x1: curX,
-        y1: -25,
-        x2: curX + u.width,
-        y2: -25,
-        refX1: curX,
+        id: "plan-dim-main-w",
+        x1: 0,
+        y1: mainWDimY,
+        x2: kd.run0Width,
+        y2: mainWDimY,
+        refX1: 0,
         refY1: 0,
-        refX2: curX + u.width,
+        refX2: kd.run0Width,
         refY2: 0,
-        value: u.width,
-        text: formatDim(u.width, unit),
+        value: kd.run0Width,
+        text: `Main: ${formatDim(kd.run0Width, unit, true)}`,
         orientation: "horizontal",
       });
 
-      curX += u.width;
-    });
-
-    // 3. Overhead Wall Cabinets projection (dashed hidden lines)
-    if (kd.wallUnits.length > 0) {
-      let curWallX = 0;
-      kd.wallUnits.forEach((wu, wIdx) => {
-        const wuD = wu.depth || kd.wallDepth;
-        rects.push({
-          id: `plan-wall-${wIdx}`,
-          x: curWallX,
-          y: 0,
-          width: wu.width,
-          height: wuD,
-          type: "hidden",
-        });
-        curWallX += wu.width;
+      // Return Run Depth (along Z at right)
+      const retDDimX = run1Units.length > 1 ? kd.run0Width + 80 : kd.run0Width + 45;
+      const totalReturnD = kd.run1Depth + 10;
+      dimensions.push({
+        id: "plan-dim-return-d",
+        x1: retDDimX,
+        y1: 0,
+        x2: retDDimX,
+        y2: totalReturnD,
+        refX1: kd.run0Width,
+        refY1: 0,
+        refX2: kd.run0Width,
+        refY2: totalReturnD,
+        value: totalReturnD,
+        text: `Return: ${formatDim(totalReturnD, unit, true)}`,
+        orientation: "vertical",
       });
 
-      // Wall Depth dimension
+      // Countertop Standard Depth (Left side)
       dimensions.push({
-        id: "plan-dim-wall-d",
-        x1: -28,
+        id: "plan-dim-ct-d",
+        x1: -35,
         y1: 0,
-        x2: -28,
-        y2: kd.wallDepth,
+        x2: -35,
+        y2: ctD,
         refX1: 0,
         refY1: 0,
         refX2: 0,
-        refY2: kd.wallDepth,
-        value: kd.wallDepth,
-        text: `Wall: ${formatDim(kd.wallDepth, unit)}`,
+        refY2: ctD,
+        value: ctD,
+        text: formatDim(ctD, unit, true),
         orientation: "vertical",
       });
+
+      return {
+        width: kd.run0Width,
+        height: totalReturnD,
+        rects,
+        lines,
+        circles,
+        dimensions,
+      };
+    } else {
+      // -----------------------------------------------------------
+      // LINEAR STRAIGHT RUN KITCHEN PLAN VIEW
+      // -----------------------------------------------------------
+      // 1. Countertop Slabs (segmented: skips tall units, fridges, and units with hasNoCountertop)
+      if (kd.hasCountertop) {
+        let segStartX: number | null = null;
+        let segEndX = 0;
+        let runningX = 0;
+        kd.baseUnits.forEach((u, idx) => {
+          const needsCt = !u.hasNoCountertop && u.type !== "tall" && u.type !== "fridge";
+          if (needsCt) {
+            if (segStartX === null) segStartX = runningX;
+            segEndX = runningX + u.width;
+          } else {
+            if (segStartX !== null) {
+              const leftOverhang = segStartX === 0 ? 10 : 0;
+              rects.push({
+                id: `plan-countertop-${idx}`,
+                x: segStartX - leftOverhang,
+                y: 0,
+                width: (segEndX - segStartX) + leftOverhang,
+                height: ctD,
+                type: "outline",
+              });
+              segStartX = null;
+            }
+          }
+          runningX += u.width;
+        });
+        if (segStartX !== null) {
+          const leftOverhang = segStartX === 0 ? 10 : 0;
+          const rightOverhang = segEndX >= kd.totalBaseW - 1 ? 10 : 0;
+          rects.push({
+            id: "plan-countertop-end",
+            x: segStartX - leftOverhang,
+            y: 0,
+            width: (segEndX - segStartX) + leftOverhang + rightOverhang,
+            height: ctD,
+            type: "outline",
+          });
+        }
+      }
+
+      // 2. Base Cabinets Underneath (joinery details)
+      let curX = 0;
+      kd.baseUnits.forEach((u, idx) => {
+        const uD = u.depth || kd.baseDepth;
+        rects.push({ id: `plan-cab-${idx}`, x: curX, y: 0, width: u.width, height: uD, type: "interior" });
+        rects.push({ id: `plan-cab-ls-${idx}`, x: curX, y: 0, width: t, height: uD, type: "interior" });
+        rects.push({ id: `plan-cab-rs-${idx}`, x: curX + u.width - t, y: 0, width: t, height: uD, type: "interior" });
+        lines.push({ id: `plan-cab-back-${idx}`, x1: curX + t, y1: 20, x2: curX + u.width - t, y2: 20, type: "interior" });
+
+        if (kd.baseUnits.length > 1) {
+          dimensions.push({
+            id: `plan-dim-u-${idx}`,
+            x1: curX,
+            y1: -30,
+            x2: curX + u.width,
+            y2: -30,
+            refX1: curX,
+            refY1: 0,
+            refX2: curX + u.width,
+            refY2: 0,
+            value: u.width,
+            text: formatDim(u.width, unit),
+            orientation: "horizontal",
+          });
+        }
+
+        curX += u.width;
+      });
+
+      // 3. Overhead Wall Cabinets projection (dashed hidden lines)
+      if (kd.wallUnits.length > 0) {
+        let curWallX = 0;
+        kd.wallUnits.forEach((wu, wIdx) => {
+          const wuD = wu.depth || kd.wallDepth;
+          rects.push({
+            id: `plan-wall-${wIdx}`,
+            x: curWallX,
+            y: 0,
+            width: wu.width,
+            height: wuD,
+            type: "hidden",
+          });
+          curWallX += wu.width;
+        });
+
+        // Wall Depth dimension
+        dimensions.push({
+          id: "plan-dim-wall-d",
+          x1: -28,
+          y1: 0,
+          x2: -28,
+          y2: kd.wallDepth,
+          refX1: 0,
+          refY1: 0,
+          refX2: 0,
+          refY2: kd.wallDepth,
+          value: kd.wallDepth,
+          text: `Wall: ${formatDim(kd.wallDepth, unit)}`,
+          orientation: "vertical",
+        });
+      }
+
+      // Overall Countertop Depth dimension
+      dimensions.push({
+        id: "plan-dim-d",
+        x1: kd.totalBaseW + 35,
+        y1: 0,
+        x2: kd.totalBaseW + 35,
+        y2: ctD,
+        refX1: kd.totalBaseW,
+        refY1: 0,
+        refX2: kd.totalBaseW,
+        refY2: ctD,
+        value: ctD,
+        text: formatDim(ctD, unit, true),
+        orientation: "vertical",
+      });
+
+      // Overall Width dimension
+      const overallWDimY = kd.baseUnits.length > 1 ? -80 : -45;
+      dimensions.push({
+        id: "plan-dim-w",
+        x1: 0,
+        y1: overallWDimY,
+        x2: kd.totalBaseW,
+        y2: overallWDimY,
+        refX1: 0,
+        refY1: 0,
+        refX2: kd.totalBaseW,
+        refY2: 0,
+        value: kd.totalBaseW,
+        text: formatDim(kd.totalBaseW, unit, true),
+        orientation: "horizontal",
+      });
+
+      return { width: kd.totalBaseW, height: ctD, rects, lines, circles, dimensions };
     }
-
-    // Overall Countertop Depth dimension
-    dimensions.push({
-      id: "plan-dim-d",
-      x1: kd.totalBaseW + 35,
-      y1: 0,
-      x2: kd.totalBaseW + 35,
-      y2: ctD,
-      refX1: kd.totalBaseW,
-      refY1: 0,
-      refX2: kd.totalBaseW,
-      refY2: ctD,
-      value: ctD,
-      text: formatDim(ctD, unit, true),
-      orientation: "vertical",
-    });
-
-    // Overall Width dimension
-    dimensions.push({
-      id: "plan-dim-w",
-      x1: 0,
-      y1: -48,
-      x2: kd.totalBaseW,
-      y2: -48,
-      refX1: 0,
-      refY1: 0,
-      refX2: kd.totalBaseW,
-      refY2: 0,
-      value: kd.totalBaseW,
-      text: formatDim(kd.totalBaseW, unit, true),
-      orientation: "horizontal",
-    });
-
-    return { width: kd.totalBaseW, height: ctD, rects, lines, circles, dimensions };
   }
 
   if (params.category === "Wardrobe") {
@@ -1367,17 +1881,19 @@ export function generateSideSectionView(params: FurnitureParams, unit: "mm" | "c
     const ctTop = kd.plinthH + kd.maxBaseH + kd.countertopThick;
     const wallY = ctTop + kd.splashH;
     const totalH = kd.wallUnits.length > 0 ? wallY + kd.maxWallH : ctTop;
-    const ctD = kd.baseDepth + 20;
+    const ctD = kd.hasCountertop ? (kd.baseDepth + 20) : (kd.baseDepth + 18);
 
-    // 1. Back Wall vertical line (X = 0)
-    lines.push({
-      id: "side-wall-line",
-      x1: 0,
-      y1: 0,
-      x2: 0,
-      y2: totalH + 30,
-      type: "outline",
-    });
+    // 1. Back Wall vertical line (X = 0) - only drawn when upper wall units exist, up to totalH
+    if (kd.wallUnits.length > 0) {
+      lines.push({
+        id: "side-wall-line",
+        x1: 0,
+        y1: 0,
+        x2: 0,
+        y2: totalH,
+        type: "outline",
+      });
+    }
 
     // 2. Base Plinth Foot (Toe kick recessed 40mm)
     if (kd.plinthH > 0) {
@@ -1455,25 +1971,29 @@ export function generateSideSectionView(params: FurnitureParams, unit: "mm" | "c
       type: "outline",
     });
 
-    // 4. Countertop Slab (20mm front overhang)
-    rects.push({
-      id: "side-countertop",
-      x: 0,
-      y: kd.plinthH + kd.maxBaseH,
-      width: ctD,
-      height: kd.countertopThick,
-      type: "outline",
-    });
+    // 4. Countertop Slab (20mm front overhang, if enabled)
+    if (kd.hasCountertop && kd.countertopThick > 0) {
+      rects.push({
+        id: "side-countertop",
+        x: 0,
+        y: kd.plinthH + kd.maxBaseH,
+        width: ctD,
+        height: kd.countertopThick,
+        type: "outline",
+      });
+    }
 
-    // 5. Backsplash Wall Gap (Height: 600mm)
-    lines.push({
-      id: "side-splash-line",
-      x1: 0,
-      y1: ctTop,
-      x2: 0,
-      y2: wallY,
-      type: "interior",
-    });
+    // 5. Backsplash Wall Gap / Panel - ONLY when wall units exist AND backsplash is enabled
+    if (kd.wallUnits.length > 0 && params.hasBacksplash) {
+      lines.push({
+        id: "side-splash-line",
+        x1: 0,
+        y1: ctTop,
+        x2: 0,
+        y2: wallY,
+        type: "interior",
+      });
+    }
 
     // 6. Upper Wall Cabinet (if wallUnits exist)
     if (kd.wallUnits.length > 0) {
@@ -1552,7 +2072,7 @@ export function generateSideSectionView(params: FurnitureParams, unit: "mm" | "c
       refX2: ctD,
       refY2: 0,
       value: ctD,
-      text: `Worktop: ${formatDim(ctD, unit, true)}`,
+      text: kd.hasCountertop ? `Worktop: ${formatDim(ctD, unit, true)}` : formatDim(ctD, unit, true),
       orientation: "horizontal",
     });
 
@@ -1586,7 +2106,7 @@ export function generateSideSectionView(params: FurnitureParams, unit: "mm" | "c
       refX2: ctD,
       refY2: ctTop,
       value: ctTop,
-      text: formatDim(ctTop, unit, true),
+      text: kd.hasCountertop ? `Worktop: ${formatDim(ctTop, unit, true)}` : formatDim(ctTop, unit, true),
       orientation: "vertical",
     });
 
@@ -1801,8 +2321,8 @@ export function generateIsometricView(
 
   if (params.category === "Cabinet") {
     const kd = getKitchenData(params);
-    W = kd.totalBaseW;
-    D = kd.baseDepth + 20;
+    W = kd.run0Width;
+    D = kd.hasCorner ? (kd.run1Depth + 10) : (kd.baseDepth + 20);
     H = kd.totalH;
   } else if (params.category === "Wardrobe") {
     const wd = getWardrobeData(params);
@@ -1848,11 +2368,27 @@ export function generateIsometricView(
   };
 
   let lineCount = 0;
+  const drawnSegments = new Set<string>();
+
   const addSegment = (
     p1: [number, number],
     p2: [number, number],
     type: DrawingLine["type"] = "outline"
   ) => {
+    // Quantize points to prevent duplicate overlapping lines
+    const qx1 = Math.round(p1[0] * 2) / 2;
+    const qy1 = Math.round(p1[1] * 2) / 2;
+    const qx2 = Math.round(p2[0] * 2) / 2;
+    const qy2 = Math.round(p2[1] * 2) / 2;
+    if (qx1 === qx2 && qy1 === qy2) return;
+
+    const key = qx1 < qx2 || (qx1 === qx2 && qy1 < qy2)
+      ? `${qx1},${qy1}_${qx2},${qy2}`
+      : `${qx2},${qy2}_${qx1},${qy1}`;
+
+    if (drawnSegments.has(key)) return;
+    drawnSegments.add(key);
+
     lineCount++;
     lines.push({
       id: `iso-ln-${lineCount}`,
@@ -1864,6 +2400,21 @@ export function generateIsometricView(
     });
   };
 
+  const isFaceFacingCamera = (nx: number, ny: number, nz: number): boolean => {
+    const n_rz = -nx * sinA + nz * cosA;
+    const dot = ny * sinB + n_rz * cosB;
+    return dot > 0.001;
+  };
+
+  interface BoxCullOptions {
+    hideTop?: boolean;
+    hideBottom?: boolean;
+    hideFront?: boolean;
+    hideBack?: boolean;
+    hideLeft?: boolean;
+    hideRight?: boolean;
+  }
+
   const addBox3d = (
     x1: number,
     y1: number,
@@ -1871,8 +2422,17 @@ export function generateIsometricView(
     x2: number,
     y2: number,
     z2: number,
-    edgeType: DrawingLine["type"] = "outline"
+    edgeType: DrawingLine["type"] = "outline",
+    cullOpts?: BoxCullOptions
   ) => {
+    const opts = cullOpts || {};
+    const fTop = !opts.hideTop && isFaceFacingCamera(0, 1, 0);
+    const fBottom = !opts.hideBottom && isFaceFacingCamera(0, -1, 0);
+    const fFront = !opts.hideFront && isFaceFacingCamera(0, 0, 1);
+    const fBack = !opts.hideBack && isFaceFacingCamera(0, 0, -1);
+    const fLeft = !opts.hideLeft && isFaceFacingCamera(-1, 0, 0);
+    const fRight = !opts.hideRight && isFaceFacingCamera(1, 0, 0);
+
     const v000 = project3d(x1, y1, z1);
     const v100 = project3d(x2, y1, z1);
     const v110 = project3d(x2, y2, z1);
@@ -1883,23 +2443,23 @@ export function generateIsometricView(
     const v111 = project3d(x2, y2, z2);
     const v011 = project3d(x1, y2, z2);
 
-    // Bottom
-    addSegment(v000, v100, edgeType);
-    addSegment(v100, v101, edgeType);
-    addSegment(v101, v001, edgeType);
-    addSegment(v001, v000, edgeType);
+    // Top edges
+    if (fTop || fBack) addSegment(v010, v110, edgeType);
+    if (fTop || fRight) addSegment(v110, v111, edgeType);
+    if (fTop || fFront) addSegment(v111, v011, edgeType);
+    if (fTop || fLeft) addSegment(v011, v010, edgeType);
 
-    // Top
-    addSegment(v010, v110, edgeType);
-    addSegment(v110, v111, edgeType);
-    addSegment(v111, v011, edgeType);
-    addSegment(v011, v010, edgeType);
+    // Bottom edges
+    if (fBottom || fBack) addSegment(v000, v100, edgeType);
+    if (fBottom || fRight) addSegment(v100, v101, edgeType);
+    if (fBottom || fFront) addSegment(v101, v001, edgeType);
+    if (fBottom || fLeft) addSegment(v001, v000, edgeType);
 
-    // Verticals
-    addSegment(v000, v010, edgeType);
-    addSegment(v100, v110, edgeType);
-    addSegment(v101, v111, edgeType);
-    addSegment(v001, v011, edgeType);
+    // Vertical corner edges
+    if (fBack || fLeft) addSegment(v000, v010, edgeType);
+    if (fBack || fRight) addSegment(v100, v110, edgeType);
+    if (fFront || fRight) addSegment(v101, v111, edgeType);
+    if (fFront || fLeft) addSegment(v001, v011, edgeType);
   };
 
   const addDoorFaceFeatures = (
@@ -2013,222 +2573,566 @@ export function generateIsometricView(
 
   if (params.category === "Cabinet") {
     const kd = getKitchenData(params);
+    const ctY = kd.plinthH + kd.maxBaseH;
+    const curHandleType = params.handleType || "bar";
 
-    // 1. Plinth Box
-    if (kd.plinthH > 0) {
-      addBox3d(30, 0, 30, kd.totalBaseW - 30, kd.plinthH, kd.baseDepth - 30, "interior");
-    }
+    if (kd.hasCorner) {
+      // -----------------------------------------------------------
+      // 3D ISOMETRIC L-SHAPED KITCHEN
+      // -----------------------------------------------------------
+      // 1. Plinth Boxes (L-Shaped, visible outer faces only)
+      if (kd.plinthH > 0) {
+        addBox3d(30, 0, 30, kd.run0Width - 30, kd.plinthH, 570, "interior", { hideTop: true, hideBottom: true, hideBack: true });
+        addBox3d(kd.run0Width - 570, 0, 570, kd.run0Width - 30, kd.plinthH, kd.run1Depth - 30, "interior", { hideTop: true, hideBottom: true, hideBack: true });
+      }
 
-    // 2. Base Cabinets Run
-    let curX = 0;
-    kd.baseUnits.forEach((u) => {
-      const uD = u.depth || kd.baseDepth;
-      const uH = u.height || kd.maxBaseH;
-      const uY = kd.plinthH;
+      // 2. Base Cabinets
+      kd.baseLayout.forEach((item) => {
+        const uY = kd.plinthH;
+        const uH = item.height;
+        const uDoorStyle = item.unit.doorStyle || "slab";
+        const uHandleType = item.unit.handleType || curHandleType;
+        const hasDoors = item.unit.doorType !== "none" || (item.unit.drawerCount || 0) > 0;
+        const unitHasCountertop = kd.hasCountertop && item.unit.type !== "tall" && item.unit.type !== "fridge" && !item.unit.hasNoCountertop;
 
-      // Carcass outline box
-      addBox3d(curX, uY, 0, curX + u.width, uY + uH, uD, "outline");
-      // Side gables inner edges
-      addBox3d(curX, uY, 0, curX + t, uY + uH, uD, "interior");
-      addBox3d(curX + u.width - t, uY, 0, curX + u.width, uY + uH, uD, "interior");
-      // Bottom panel
-      addBox3d(curX + t, uY, 0, curX + u.width - t, uY + t, uD, "interior");
+        if (item.isCorner) {
+          // 90° Corner Base Unit
+          if (!unitHasCountertop) {
+            // L-shaped top panel
+            addSegment(project3d(item.x, uY + uH, 0), project3d(kd.run0Width, uY + uH, 0), "outline");
+            addSegment(project3d(kd.run0Width, uY + uH, 0), project3d(kd.run0Width, uY + uH, item.z + item.depth), "outline");
+            addSegment(project3d(item.x, uY + uH, 600), project3d(kd.run0Width - 600, uY + uH, 600), "outline");
+            addSegment(project3d(kd.run0Width - 600, uY + uH, 600), project3d(kd.run0Width - 600, uY + uH, item.z + item.depth), "outline");
+          }
 
-      // Drawers or Doors with Handles (Isometric View shows doors & details!)
-      if (u.drawerCount > 0) {
-        const dCount = u.drawerCount;
-        const dH = (uH - t) / dCount;
-        const curDoorStyle = u.doorStyle || params.doorStyle;
-        const curHandleType = u.handleType || params.handleType || "bar";
-        for (let di = 0; di < dCount; di++) {
-          const dy = uY + di * dH + 2;
-          const dh = dH - 4;
-          // Drawer front face box
-          addBox3d(curX + 2, dy, uD, curX + u.width - 2, dy + dh, uD + 18, "outline");
-          addDoorFaceFeatures(curX + 2, dy, curX + u.width - 2, dy + dh, uD + 18, curDoorStyle);
-          // Drawer handle (horizontal)
-          const midY = dy + dh / 2;
-          const midX = curX + u.width / 2;
-          drawHandle3d(midX, midY, uD + 18, curHandleType, "horizontal", "center", u.width > 700 ? 110 : 70);
+          // Bi-fold corner doors
+          // Door 1 (facing +Z at z = 600)
+          addBox3d(item.x + 2, uY + 2, 600, kd.run0Width - 600 - 2, uY + uH - 2, 618, "outline", { hideBack: true, hideLeft: item.x > 0 });
+          addDoorFaceFeatures(item.x + 2, uY + 2, kd.run0Width - 600 - 2, uY + uH - 2, 618, uDoorStyle);
+          // Door 2 (facing -X at x = kd.run0Width - 600)
+          addBox3d(kd.run0Width - 600 - 18, uY + 2, 600 + 2, kd.run0Width - 600, uY + uH - 2, item.z + item.depth - 2, "outline", { hideBack: true, hideFront: true });
+
+          // Corner handles near 90° inside vertex
+          drawHandle3d(kd.run0Width - 600 - 30, uY + uH - 60, 618, uHandleType, "vertical", "right");
+          drawHandle3d(kd.run0Width - 600 - 18, uY + uH - 60, 600 + 30, uHandleType, "vertical", "left");
+        } else if (item.runIndex === 0) {
+          // Run 0 Base Unit (along X, facing +Z)
+          const curX = item.x;
+          const uW = item.width;
+          const uD = 600;
+          const isFirst = (curX === 0);
+
+          // Exposed left gable ONLY if curX === 0
+          if (isFirst) {
+            const gableFrontZ = uD + (hasDoors ? 18 : 0);
+            addSegment(project3d(0, uY, 0), project3d(0, uY + uH, 0), "outline");
+            addSegment(project3d(0, uY, 0), project3d(0, uY, gableFrontZ), "outline");
+            addSegment(project3d(0, uY, gableFrontZ), project3d(0, uY + uH, gableFrontZ), "outline");
+            if (!unitHasCountertop) {
+              addSegment(project3d(0, uY + uH, 0), project3d(0, uY + uH, gableFrontZ), "outline");
+            }
+          }
+
+          // Top panel cap (if no countertop)
+          if (!unitHasCountertop) {
+            const topFrontZ = uD + (hasDoors ? 18 : 0);
+            addSegment(project3d(curX, uY + uH, 0), project3d(curX + uW, uY + uH, 0), "outline");
+            addSegment(project3d(curX, uY + uH, topFrontZ), project3d(curX + uW, uY + uH, topFrontZ), "outline");
+          }
+
+          if (!hasDoors) {
+            // Open cabinet
+            addSegment(project3d(curX, uY, uD), project3d(curX, uY + uH, uD), "outline");
+            addSegment(project3d(curX + t, uY, uD), project3d(curX + t, uY + uH, uD), "interior");
+            addSegment(project3d(curX + uW - t, uY, uD), project3d(curX + uW - t, uY + uH, uD), "interior");
+            addSegment(project3d(curX + uW, uY, uD), project3d(curX + uW, uY + uH, uD), "outline");
+            if (!item.unit.hasNoBottom && item.unit.type !== "fridge" && item.unit.type !== "dishwasher") {
+              addSegment(project3d(curX, uY, uD), project3d(curX + uW, uY, uD), "outline");
+              addSegment(project3d(curX + t, uY + t, uD), project3d(curX + uW - t, uY + t, uD), "interior");
+            }
+            if (item.unit.internalShelves > 0) {
+              const spacing = (uH - t * 2) / (item.unit.internalShelves + 1);
+              for (let s = 1; s <= item.unit.internalShelves; s++) {
+                const sy = uY + t + s * spacing;
+                addSegment(project3d(curX + t, sy - t / 2, uD - 15), project3d(curX + uW - t, sy - t / 2, uD - 15), "interior");
+                addSegment(project3d(curX + t, sy + t / 2, uD - 15), project3d(curX + uW - t, sy + t / 2, uD - 15), "interior");
+              }
+            }
+          } else if (item.unit.drawerCount > 0) {
+            const dCount = item.unit.drawerCount;
+            const dH = (uH - t) / dCount;
+            for (let di = 0; di < dCount; di++) {
+              const dy = uY + di * dH + 2;
+              const dh = dH - 4;
+              addBox3d(curX + 2, dy, uD, curX + uW - 2, dy + dh, uD + 18, "outline", { hideBack: true, hideLeft: !isFirst });
+              addDoorFaceFeatures(curX + 2, dy, curX + uW - 2, dy + dh, uD + 18, uDoorStyle);
+              drawHandle3d(curX + uW / 2, dy + dh / 2, uD + 18, uHandleType, "horizontal", "center", uW > 700 ? 110 : 70);
+            }
+          } else if (item.unit.doorType === "singleLeft") {
+            addBox3d(curX + 2, uY + 2, uD, curX + uW - 2, uY + uH - 2, uD + 18, "outline", { hideBack: true, hideLeft: !isFirst });
+            addDoorFaceFeatures(curX + 2, uY + 2, curX + uW - 2, uY + uH - 2, uD + 18, uDoorStyle);
+            drawHandle3d(curX + uW - 35, uY + uH - 60, uD + 18, uHandleType, "vertical", "right");
+          } else if (item.unit.doorType === "singleRight") {
+            addBox3d(curX + 2, uY + 2, uD, curX + uW - 2, uY + uH - 2, uD + 18, "outline", { hideBack: true, hideLeft: !isFirst });
+            addDoorFaceFeatures(curX + 2, uY + 2, curX + uW - 2, uY + uH - 2, uD + 18, uDoorStyle);
+            drawHandle3d(curX + 35, uY + uH - 60, uD + 18, uHandleType, "vertical", "left");
+          } else if (item.unit.doorType === "double" || item.unit.doorType === "cornerDouble") {
+            const midX = curX + uW / 2;
+            addBox3d(curX + 2, uY + 2, uD, midX - 2, uY + uH - 2, uD + 18, "outline", { hideBack: true, hideLeft: !isFirst });
+            addDoorFaceFeatures(curX + 2, uY + 2, midX - 2, uY + uH - 2, uD + 18, uDoorStyle);
+            addBox3d(midX + 2, uY + 2, uD, curX + uW - 2, uY + uH - 2, uD + 18, "outline", { hideBack: true, hideLeft: true });
+            addDoorFaceFeatures(midX + 2, uY + 2, curX + uW - 2, uY + uH - 2, uD + 18, uDoorStyle);
+            drawHandle3d(midX - 25, uY + uH - 60, uD + 18, uHandleType, "vertical", "left");
+            drawHandle3d(midX + 25, uY + uH - 60, uD + 18, uHandleType, "vertical", "right");
+          }
+        } else {
+          // Run 1 Base Unit (along Z, facing -X into room)
+          const curZ = item.z;
+          const uW = item.width;
+          const cabX = kd.run0Width - 600;
+          const isLastRun1 = (curZ + uW >= kd.run1Depth - 1);
+
+          // If this is the last unit at the far end of Run 1: draw end gable facing +Z
+          if (isLastRun1) {
+            const endZ = curZ + uW;
+            addSegment(project3d(cabX - (hasDoors ? 18 : 0), uY, endZ), project3d(kd.run0Width, uY, endZ), "outline");
+            addSegment(project3d(kd.run0Width, uY, endZ), project3d(kd.run0Width, uY + uH, endZ), "outline");
+            addSegment(project3d(cabX - (hasDoors ? 18 : 0), uY, endZ), project3d(cabX - (hasDoors ? 18 : 0), uY + uH, endZ), "outline");
+            if (!unitHasCountertop) {
+              addSegment(project3d(cabX - (hasDoors ? 18 : 0), uY + uH, endZ), project3d(kd.run0Width, uY + uH, endZ), "outline");
+            }
+          }
+
+          if (!hasDoors) {
+            // Open cabinet facing -X
+            addSegment(project3d(cabX, uY, curZ), project3d(cabX, uY + uH, curZ), "outline");
+            addSegment(project3d(cabX, uY, curZ + uW), project3d(cabX, uY + uH, curZ + uW), "outline");
+            addSegment(project3d(cabX, uY, curZ), project3d(cabX, uY, curZ + uW), "outline");
+          } else if (item.unit.drawerCount > 0) {
+            const dCount = item.unit.drawerCount;
+            const dH = (uH - t) / dCount;
+            for (let di = 0; di < dCount; di++) {
+              const dy = uY + di * dH + 2;
+              const dh = dH - 4;
+              addBox3d(cabX - 18, dy, curZ + 2, cabX, dy + dh, curZ + uW - 2, "outline", { hideBack: true, hideFront: !isLastRun1 });
+              drawHandle3d(cabX - 18, dy + dh / 2, curZ + uW / 2, uHandleType, "horizontal", "center", uW > 700 ? 110 : 70);
+            }
+          } else if (item.unit.doorType === "singleLeft" || item.unit.doorType === "singleRight") {
+            addBox3d(cabX - 18, uY + 2, curZ + 2, cabX, uY + uH - 2, curZ + uW - 2, "outline", { hideBack: true, hideFront: !isLastRun1 });
+            drawHandle3d(cabX - 18, uY + uH - 60, curZ + uW - 35, uHandleType, "vertical", "right");
+          } else if (item.unit.doorType === "double" || item.unit.doorType === "cornerDouble") {
+            const midZ = curZ + uW / 2;
+            addBox3d(cabX - 18, uY + 2, curZ + 2, cabX, uY + uH - 2, midZ - 2, "outline", { hideBack: true, hideFront: true });
+            addBox3d(cabX - 18, uY + 2, midZ + 2, cabX, uY + uH - 2, curZ + uW - 2, "outline", { hideBack: true, hideFront: !isLastRun1 });
+            drawHandle3d(cabX - 18, uY + uH - 60, midZ - 25, uHandleType, "vertical", "left");
+            drawHandle3d(cabX - 18, uY + uH - 60, midZ + 25, uHandleType, "vertical", "right");
+          }
         }
-      } else if (u.doorType === "singleLeft") {
-        // Single Left door (hinged left, handle right)
-        const curDoorStyle = u.doorStyle || params.doorStyle;
-        const curHandleType = u.handleType || params.handleType || "bar";
-        addBox3d(curX + 2, uY + 2, uD, curX + u.width - 2, uY + uH - 2, uD + 18, "outline");
-        addDoorFaceFeatures(curX + 2, uY + 2, curX + u.width - 2, uY + uH - 2, uD + 18, curDoorStyle);
-        const hX = curX + u.width - 35;
-        const hY = uY + uH - 60;
-        drawHandle3d(hX, hY, uD + 18, curHandleType, "vertical", "right");
-      } else if (u.doorType === "singleRight") {
-        // Single Right door (hinged right, handle left)
-        const curDoorStyle = u.doorStyle || params.doorStyle;
-        const curHandleType = u.handleType || params.handleType || "bar";
-        addBox3d(curX + 2, uY + 2, uD, curX + u.width - 2, uY + uH - 2, uD + 18, "outline");
-        addDoorFaceFeatures(curX + 2, uY + 2, curX + u.width - 2, uY + uH - 2, uD + 18, curDoorStyle);
-        const hX = curX + 35;
-        const hY = uY + uH - 60;
-        drawHandle3d(hX, hY, uD + 18, curHandleType, "vertical", "left");
-      } else if (u.doorType === "double" || u.doorType === "cornerDouble") {
-        // Double doors / Corner double doors
-        const curDoorStyle = u.doorStyle || params.doorStyle;
-        const curHandleType = u.handleType || params.handleType || "bar";
-        const midX = curX + u.width / 2;
-        addBox3d(curX + 2, uY + 2, uD, midX - 2, uY + uH - 2, uD + 18, "outline");
-        addDoorFaceFeatures(curX + 2, uY + 2, midX - 2, uY + uH - 2, uD + 18, curDoorStyle);
-        addBox3d(midX + 2, uY + 2, uD, curX + u.width - 2, uY + uH - 2, uD + 18, "outline");
-        addDoorFaceFeatures(midX + 2, uY + 2, curX + u.width - 2, uY + uH - 2, uD + 18, curDoorStyle);
-        const hY = uY + uH - 60;
-        drawHandle3d(midX - 25, hY, uD + 18, curHandleType, "vertical", "left");
-        drawHandle3d(midX + 25, hY, uD + 18, curHandleType, "vertical", "right");
-      } else if (u.internalShelves > 0) {
-        // Open shelves
-        const spacing = (uH - t * 2) / (u.internalShelves + 1);
-        for (let s = 1; s <= u.internalShelves; s++) {
-          const sy = uY + t + s * spacing;
-          addBox3d(curX + t, sy - t / 2, 0, curX + u.width - t, sy + t / 2, uD - 15, "interior");
+      });
+
+      // 3. Continuous Countertop Slab (L-Shaped in 3D, only if enabled)
+      if (kd.hasCountertop && kd.countertopThick > 0) {
+        addBox3d(-10, ctY, 0, kd.run0Width + 10, ctY + kd.countertopThick, 620, "outline", { hideBottom: true, hideBack: true });
+        addBox3d(kd.run0Width - 620, ctY, 620, kd.run0Width + 10, ctY + kd.countertopThick, kd.run1Depth + 10, "outline", { hideBottom: true, hideBack: true });
+      }
+
+      // 4. Backsplash Wall Panel (if enabled and wall units exist)
+      if (params.hasBacksplash && kd.wallLayout.length > 0) {
+        const bsY1 = ctY + (kd.hasCountertop ? kd.countertopThick : 0);
+        const bsY2 = kd.wallLayout[0].y;
+        if (bsY2 > bsY1) {
+          addBox3d(0, bsY1, 0, kd.run0Width, bsY2, 12, "interior", { hideBottom: true, hideBack: true });
+          addBox3d(kd.run0Width - 12, bsY1, 12, kd.run0Width, bsY2, kd.run1Depth, "interior", { hideBottom: true, hideBack: true });
         }
       }
 
-      curX += u.width;
-    });
+      // 5. Upper Wall Cabinets
+      kd.wallLayout.forEach((wu) => {
+        const wuY = wu.y;
+        const wuH = wu.height;
+        const uDoorStyle = wu.unit.doorStyle || "slab";
+        const uHandleType = wu.unit.handleType || curHandleType;
+        const hY = wuY + 60;
 
-    // 3. Continuous Countertop Slab (overhang 10mm sides, 20mm front)
-    const ctY = kd.plinthH + kd.maxBaseH;
-    addBox3d(-10, ctY, 0, kd.totalBaseW + 10, ctY + kd.countertopThick, kd.baseDepth + 20, "outline");
+        if (wu.isCorner) {
+          // Corner Wall unit (600x600 L-shape)
+          addSegment(project3d(wu.x, wuY + wuH, 0), project3d(kd.run0Width, wuY + wuH, 0), "outline");
+          addSegment(project3d(kd.run0Width, wuY + wuH, 0), project3d(kd.run0Width, wuY + wuH, wu.depth), "outline");
+          addSegment(project3d(wu.x, wuY + wuH, 350), project3d(kd.run0Width - 350, wuY + wuH, 350), "outline");
+          addSegment(project3d(kd.run0Width - 350, wuY + wuH, 350), project3d(kd.run0Width - 350, wuY + wuH, wu.depth), "outline");
+        } else if (wu.runIndex === 0) {
+          // Run 0 Wall Unit (along X)
+          const isFirstWall = (wu.x === 0);
+          const topY = wuY + wuH;
+          const frontZ = wu.depth + (wu.unit.doorType !== "none" ? 18 : 0);
 
-    // 4. Upper Wall Cabinets
-    if (kd.wallUnits.length > 0) {
-      const wallY = ctY + kd.countertopThick + kd.splashH;
-      let curWallX = 0;
-      kd.wallUnits.forEach((wu) => {
-        const wuD = wu.depth || kd.wallDepth;
-        const wuH = wu.height || kd.maxWallH;
+          addSegment(project3d(wu.x, topY, 0), project3d(wu.x + wu.width, topY, 0), "outline");
+          addSegment(project3d(wu.x, topY, frontZ), project3d(wu.x + wu.width, topY, frontZ), "outline");
+          if (isFirstWall) {
+            addSegment(project3d(0, wuY, 0), project3d(0, topY, 0), "outline");
+            addSegment(project3d(0, wuY, 0), project3d(0, wuY, frontZ), "outline");
+            addSegment(project3d(0, wuY, frontZ), project3d(0, topY, frontZ), "outline");
+            addSegment(project3d(0, topY, 0), project3d(0, topY, frontZ), "outline");
+          }
 
-        // Wall Carcass Box (flush against wall Z = 0)
-        addBox3d(curWallX, wallY, 0, curWallX + wu.width, wallY + wuH, wuD, "outline");
-        addBox3d(curWallX, wallY, 0, curWallX + t, wallY + wuH, wuD, "interior");
-        addBox3d(curWallX + wu.width - t, wallY, 0, curWallX + wu.width, wallY + wuH, wuD, "interior");
-        addBox3d(curWallX + t, wallY, 0, curWallX + wu.width - t, wallY + t, wuD, "interior");
-        addBox3d(curWallX + t, wallY + wuH - t, 0, curWallX + wu.width - t, wallY + wuH, wuD, "interior");
+          if (wu.unit.doorType === "none") {
+            addSegment(project3d(wu.x + t, wuY, wu.depth), project3d(wu.x + t, topY - t, wu.depth), "interior");
+            addSegment(project3d(wu.x + wu.width - t, wuY, wu.depth), project3d(wu.x + wu.width - t, topY - t, wu.depth), "interior");
+          } else if (wu.unit.doorType === "singleLeft") {
+            addBox3d(wu.x + 2, wuY + 2, wu.depth, wu.x + wu.width - 2, wuY + wuH - 2, wu.depth + 18, "outline", { hideBack: true, hideLeft: !isFirstWall });
+            addDoorFaceFeatures(wu.x + 2, wuY + 2, wu.x + wu.width - 2, wuY + wuH - 2, wu.depth + 18, uDoorStyle);
+            drawHandle3d(wu.x + wu.width - 35, hY, wu.depth + 18, uHandleType, "vertical", "right");
+          } else if (wu.unit.doorType === "singleRight") {
+            addBox3d(wu.x + 2, wuY + 2, wu.depth, wu.x + wu.width - 2, wuY + wuH - 2, wu.depth + 18, "outline", { hideBack: true, hideLeft: !isFirstWall });
+            addDoorFaceFeatures(wu.x + 2, wuY + 2, wu.x + wu.width - 2, wuY + wuH - 2, wu.depth + 18, uDoorStyle);
+            drawHandle3d(wu.x + 35, hY, wu.depth + 18, uHandleType, "vertical", "left");
+          } else if (wu.unit.doorType === "double" || wu.unit.doorType === "cornerDouble") {
+            const midX = wu.x + wu.width / 2;
+            addBox3d(wu.x + 2, wuY + 2, wu.depth, midX - 2, wuY + wuH - 2, wu.depth + 18, "outline", { hideBack: true, hideLeft: !isFirstWall });
+            addDoorFaceFeatures(wu.x + 2, wuY + 2, midX - 2, wuY + wuH - 2, wu.depth + 18, uDoorStyle);
+            addBox3d(midX + 2, wuY + 2, wu.depth, wu.x + wu.width - 2, wuY + wuH - 2, wu.depth + 18, "outline", { hideBack: true, hideLeft: true });
+            addDoorFaceFeatures(midX + 2, wuY + 2, wu.x + wu.width - 2, wuY + wuH - 2, wu.depth + 18, uDoorStyle);
+            drawHandle3d(midX - 25, hY, wu.depth + 18, uHandleType, "vertical", "left");
+            drawHandle3d(midX + 25, hY, wu.depth + 18, uHandleType, "vertical", "right");
+          }
+        } else {
+          // Run 1 Wall Unit (along Z)
+          const cabX = kd.run0Width - wu.depth;
+          if (wu.unit.doorType === "none") {
+            addSegment(project3d(cabX, wuY, wu.z), project3d(cabX, wuY + wuH, wu.z), "outline");
+            addSegment(project3d(cabX, wuY, wu.z + wu.width), project3d(cabX, wuY + wuH, wu.z + wu.width), "outline");
+          } else {
+            addBox3d(cabX - 18, wuY + 2, wu.z + 2, cabX, wuY + wuH - 2, wu.z + wu.width - 2, "outline", { hideBack: true });
+            drawHandle3d(cabX - 18, hY, wu.z + wu.width - 35, uHandleType, "vertical", "right");
+          }
+        }
+      });
+    } else {
+      // -----------------------------------------------------------
+      // LINEAR STRAIGHT RUN ISOMETRIC VIEW
+      // -----------------------------------------------------------
+      // 1. Plinth Box (visible outer faces only)
+      if (kd.plinthH > 0) {
+        addBox3d(30, 0, 30, kd.totalBaseW - 30, kd.plinthH, kd.baseDepth - 30, "interior", { hideTop: true, hideBottom: true, hideBack: true });
+      }
 
-        // Wall Doors & Handles (handles at lower edge for reach)
-        const hY = wallY + 60;
-        const curDoorStyle = wu.doorStyle || params.doorStyle;
-        const curHandleType = wu.handleType || params.handleType || "bar";
-        if (wu.doorType === "singleLeft") {
-          addBox3d(curWallX + 2, wallY + 2, wuD, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, "outline");
-          addDoorFaceFeatures(curWallX + 2, wallY + 2, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, curDoorStyle);
-          const hX = curWallX + wu.width - 35;
-          drawHandle3d(hX, hY, wuD + 18, curHandleType, "vertical", "right");
-        } else if (wu.doorType === "singleRight") {
-          addBox3d(curWallX + 2, wallY + 2, wuD, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, "outline");
-          addDoorFaceFeatures(curWallX + 2, wallY + 2, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, curDoorStyle);
-          const hX = curWallX + 35;
-          drawHandle3d(hX, hY, wuD + 18, curHandleType, "vertical", "left");
-        } else if (wu.doorType === "double" || wu.doorType === "cornerDouble") {
-          const midX = curWallX + wu.width / 2;
-          addBox3d(curWallX + 2, wallY + 2, wuD, midX - 2, wallY + wuH - 2, wuD + 18, "outline");
-          addDoorFaceFeatures(curWallX + 2, wallY + 2, midX - 2, wallY + wuH - 2, wuD + 18, curDoorStyle);
-          addBox3d(midX + 2, wallY + 2, wuD, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, "outline");
-          addDoorFaceFeatures(midX + 2, wallY + 2, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, curDoorStyle);
-          drawHandle3d(midX - 25, hY, wuD + 18, curHandleType, "vertical", "left");
-          drawHandle3d(midX + 25, hY, wuD + 18, curHandleType, "vertical", "right");
-        } else if (wu.doorType === "flipUp") {
-          addBox3d(curWallX + 2, wallY + 2, wuD, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, "outline");
-          addDoorFaceFeatures(curWallX + 2, wallY + 2, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, curDoorStyle);
-          const midX = curWallX + wu.width / 2;
-          drawHandle3d(midX, hY, wuD + 18, curHandleType, "horizontal", "center");
-        } else if (wu.internalShelves > 0) {
-          const spacing = (wuH - t * 2) / (wu.internalShelves + 1);
-          for (let s = 1; s <= wu.internalShelves; s++) {
-            const sy = wallY + t + s * spacing;
-            addBox3d(curWallX + t, sy - t / 2, 0, curWallX + wu.width - t, sy + t / 2, wuD - 15, "interior");
+      // 2. Base Cabinets Run
+      let curX = 0;
+      kd.baseUnits.forEach((u, uIdx) => {
+        const uD = u.depth || kd.baseDepth;
+        const uH = u.height || kd.maxBaseH;
+        const uY = kd.plinthH;
+        const uW = u.width;
+        const isFirst = (curX === 0);
+        const isLast = (uIdx === kd.baseUnits.length - 1);
+        const hasDoors = u.doorType !== "none" || (u.drawerCount || 0) > 0;
+        const unitHasCountertop = kd.hasCountertop && u.type !== "tall" && u.type !== "fridge" && !u.hasNoCountertop;
+        const uDoorStyle = u.doorStyle || "slab";
+        const uHandleType = u.handleType || curHandleType;
+
+        // 1. Left gable outline (exposed ONLY if leftmost cabinet)
+        if (isFirst) {
+          const gableFrontZ = uD + (hasDoors ? 18 : 0);
+          addSegment(project3d(0, uY, 0), project3d(0, uY + uH, 0), "outline");
+          addSegment(project3d(0, uY, 0), project3d(0, uY, gableFrontZ), "outline");
+          addSegment(project3d(0, uY, gableFrontZ), project3d(0, uY + uH, gableFrontZ), "outline");
+          if (!unitHasCountertop) {
+            addSegment(project3d(0, uY + uH, 0), project3d(0, uY + uH, gableFrontZ), "outline");
+          }
+        } else {
+          // Intermediate cabinet: check if it's taller than previous unit (e.g. Base to Tall/Fridge step)
+          const prevUnit = kd.baseUnits[uIdx - 1];
+          const prevH = prevUnit.height || kd.maxBaseH;
+          if (uH > prevH) {
+            const gableFrontZ = uD + (hasDoors ? 18 : 0);
+            addSegment(project3d(curX, uY + prevH, 0), project3d(curX, uY + uH, 0), "outline");
+            addSegment(project3d(curX, uY + prevH, gableFrontZ), project3d(curX, uY + uH, gableFrontZ), "outline");
+            if (!unitHasCountertop) {
+              addSegment(project3d(curX, uY + uH, 0), project3d(curX, uY + uH, gableFrontZ), "outline");
+            }
           }
         }
 
-        curWallX += wu.width;
+        // 2. Top panel cap (visible if NO countertop over this unit, e.g. Tall pantry, Fridge, or hasNoCountertop)
+        if (!unitHasCountertop) {
+          const topFrontZ = uD + (hasDoors ? 18 : 0);
+          const topY = uY + uH;
+          addSegment(project3d(curX, topY, 0), project3d(curX + uW, topY, 0), "outline");
+          addSegment(project3d(curX, topY, topFrontZ), project3d(curX + uW, topY, topFrontZ), "outline");
+          const nextUnit = kd.baseUnits[uIdx + 1];
+          const nextH = nextUnit ? (nextUnit.height || kd.maxBaseH) : 0;
+          if (isLast || uH > nextH) {
+            addSegment(project3d(curX + uW, topY, 0), project3d(curX + uW, topY, topFrontZ), "outline");
+          }
+        }
+
+        // 3. Facade / Carcass front
+        if (!hasDoors) {
+          // OPEN CABINET (no doors, no drawers)
+          addSegment(project3d(curX, uY, uD), project3d(curX, uY + uH, uD), "outline");
+          addSegment(project3d(curX + t, uY, uD), project3d(curX + t, uY + uH, uD), "interior");
+          addSegment(project3d(curX + uW - t, uY, uD), project3d(curX + uW - t, uY + uH, uD), "interior");
+          addSegment(project3d(curX + uW, uY, uD), project3d(curX + uW, uY + uH, uD), "outline");
+          if (!u.hasNoBottom && u.type !== "fridge" && u.type !== "dishwasher") {
+            addSegment(project3d(curX, uY, uD), project3d(curX + uW, uY, uD), "outline");
+            addSegment(project3d(curX + t, uY + t, uD), project3d(curX + uW - t, uY + t, uD), "interior");
+          }
+          if (!unitHasCountertop) {
+            addSegment(project3d(curX + t, uY + uH - t, uD), project3d(curX + uW - t, uY + uH - t, uD), "interior");
+          }
+          if (u.internalShelves > 0) {
+            const spacing = (uH - t * 2) / (u.internalShelves + 1);
+            for (let s = 1; s <= u.internalShelves; s++) {
+              const sy = uY + t + s * spacing;
+              addSegment(project3d(curX + t, sy - t / 2, uD - 15), project3d(curX + uW - t, sy - t / 2, uD - 15), "interior");
+              addSegment(project3d(curX + t, sy + t / 2, uD - 15), project3d(curX + uW - t, sy + t / 2, uD - 15), "interior");
+            }
+          }
+        } else if (u.drawerCount > 0) {
+          // Drawers
+          const dCount = u.drawerCount;
+          const dH = (uH - t) / dCount;
+          for (let di = 0; di < dCount; di++) {
+            const dy = uY + di * dH + 2;
+            const dh = dH - 4;
+            addBox3d(curX + 2, dy, uD, curX + uW - 2, dy + dh, uD + 18, "outline", { hideBack: true, hideLeft: !isFirst });
+            addDoorFaceFeatures(curX + 2, dy, curX + uW - 2, dy + dh, uD + 18, uDoorStyle);
+            drawHandle3d(curX + uW / 2, dy + dh / 2, uD + 18, uHandleType, "horizontal", "center", uW > 700 ? 110 : 70);
+          }
+        } else if (u.doorType === "singleLeft") {
+          addBox3d(curX + 2, uY + 2, uD, curX + uW - 2, uY + uH - 2, uD + 18, "outline", { hideBack: true, hideLeft: !isFirst });
+          addDoorFaceFeatures(curX + 2, uY + 2, curX + uW - 2, uY + uH - 2, uD + 18, uDoorStyle);
+          drawHandle3d(curX + uW - 35, uY + uH - 60, uD + 18, uHandleType, "vertical", "right");
+        } else if (u.doorType === "singleRight") {
+          addBox3d(curX + 2, uY + 2, uD, curX + uW - 2, uY + uH - 2, uD + 18, "outline", { hideBack: true, hideLeft: !isFirst });
+          addDoorFaceFeatures(curX + 2, uY + 2, curX + uW - 2, uY + uH - 2, uD + 18, uDoorStyle);
+          drawHandle3d(curX + 35, uY + uH - 60, uD + 18, uHandleType, "vertical", "left");
+        } else if (u.doorType === "double" || u.doorType === "cornerDouble") {
+          const midX = curX + uW / 2;
+          addBox3d(curX + 2, uY + 2, uD, midX - 2, uY + uH - 2, uD + 18, "outline", { hideBack: true, hideLeft: !isFirst });
+          addDoorFaceFeatures(curX + 2, uY + 2, midX - 2, uY + uH - 2, uD + 18, uDoorStyle);
+          addBox3d(midX + 2, uY + 2, uD, curX + uW - 2, uY + uH - 2, uD + 18, "outline", { hideBack: true, hideLeft: true });
+          addDoorFaceFeatures(midX + 2, uY + 2, curX + uW - 2, uY + uH - 2, uD + 18, uDoorStyle);
+          drawHandle3d(midX - 25, uY + uH - 60, uD + 18, uHandleType, "vertical", "left");
+          drawHandle3d(midX + 25, uY + uH - 60, uD + 18, uHandleType, "vertical", "right");
+        }
+
+        curX += uW;
       });
+
+      // 3. Segmented Countertop Slabs (Only over base/dishwasher units with countertops)
+      if (kd.hasCountertop && kd.countertopThick > 0) {
+        let segStartX: number | null = null;
+        let segEndX = 0;
+        let walkX = 0;
+
+        kd.baseUnits.forEach((u) => {
+          const uHasCt = u.type !== "tall" && u.type !== "fridge" && !u.hasNoCountertop;
+          if (uHasCt) {
+            if (segStartX === null) {
+              segStartX = walkX;
+            }
+            segEndX = walkX + u.width;
+          } else {
+            if (segStartX !== null) {
+              const oHangL = segStartX === 0 ? 10 : 0;
+              addBox3d(segStartX - oHangL, ctY, 0, segEndX, ctY + kd.countertopThick, kd.baseDepth + 20, "outline", {
+                hideBottom: true,
+                hideBack: true,
+                hideLeft: segStartX > 0,
+              });
+              segStartX = null;
+            }
+          }
+          walkX += u.width;
+        });
+
+        if (segStartX !== null) {
+          const oHangL = segStartX === 0 ? 10 : 0;
+          const oHangR = segEndX >= kd.totalBaseW - 1 ? 10 : 0;
+          addBox3d(segStartX - oHangL, ctY, 0, segEndX + oHangR, ctY + kd.countertopThick, kd.baseDepth + 20, "outline", {
+            hideBottom: true,
+            hideBack: true,
+            hideLeft: segStartX > 0,
+          });
+        }
+      }
+
+      // 4. Backsplash Wall Panel (if enabled and wall units exist)
+      if (params.hasBacksplash && kd.wallUnits.length > 0) {
+        const wallY = ctY + (kd.hasCountertop ? kd.countertopThick : 0) + kd.splashH;
+        const bsY1 = ctY + (kd.hasCountertop ? kd.countertopThick : 0);
+        addBox3d(0, bsY1, 0, kd.totalBaseW, wallY, 12, "interior", { hideBottom: true, hideBack: true });
+      }
+
+      // 5. Upper Wall Cabinets
+      if (kd.wallUnits.length > 0) {
+        const wallY = ctY + kd.countertopThick + kd.splashH;
+        let curWallX = 0;
+        kd.wallUnits.forEach((wu, wuIdx) => {
+          const wuD = wu.depth || kd.wallDepth;
+          const wuH = wu.height || kd.maxWallH;
+          const uDoorStyle = wu.doorStyle || "slab";
+          const uHandleType = wu.handleType || curHandleType;
+          const isFirstWall = (curWallX === 0);
+          const isLastWall = (wuIdx === kd.wallUnits.length - 1);
+          const hasDoors = wu.doorType !== "none";
+
+          const topFrontZ = wuD + (hasDoors ? 18 : 0);
+          const topY = wallY + wuH;
+          addSegment(project3d(curWallX, topY, 0), project3d(curWallX + wu.width, topY, 0), "outline");
+          addSegment(project3d(curWallX, topY, topFrontZ), project3d(curWallX + wu.width, topY, topFrontZ), "outline");
+          if (isFirstWall) {
+            addSegment(project3d(curWallX, topY, 0), project3d(curWallX, topY, topFrontZ), "outline");
+            addSegment(project3d(0, wallY, 0), project3d(0, topY, 0), "outline");
+            addSegment(project3d(0, wallY, 0), project3d(0, wallY, topFrontZ), "outline");
+            addSegment(project3d(0, wallY, topFrontZ), project3d(0, topY, topFrontZ), "outline");
+          }
+          if (isLastWall) {
+            addSegment(project3d(curWallX + wu.width, topY, 0), project3d(curWallX + wu.width, topY, topFrontZ), "outline");
+          }
+
+          addSegment(project3d(curWallX, wallY, topFrontZ), project3d(curWallX + wu.width, wallY, topFrontZ), "outline");
+
+          if (!hasDoors) {
+            addSegment(project3d(curWallX + t, wallY, wuD), project3d(curWallX + t, topY - t, wuD), "interior");
+            addSegment(project3d(curWallX + wu.width - t, wallY, wuD), project3d(curWallX + wu.width - t, topY - t, wuD), "interior");
+            addSegment(project3d(curWallX + t, wallY + t, wuD), project3d(curWallX + wu.width - t, wallY + t, wuD), "interior");
+            addSegment(project3d(curWallX + t, topY - t, wuD), project3d(curWallX + wu.width - t, topY - t, wuD), "interior");
+            if (wu.internalShelves > 0) {
+              const spacing = (wuH - t * 2) / (wu.internalShelves + 1);
+              for (let s = 1; s <= wu.internalShelves; s++) {
+                const sy = wallY + t + s * spacing;
+                addSegment(project3d(curWallX + t, sy - t / 2, wuD - 15), project3d(curWallX + wu.width - t, sy - t / 2, wuD - 15), "interior");
+                addSegment(project3d(curWallX + t, sy + t / 2, wuD - 15), project3d(curWallX + wu.width - t, sy + t / 2, wuD - 15), "interior");
+              }
+            }
+          } else {
+            const hY = wallY + 60;
+            if (wu.doorType === "singleLeft") {
+              addBox3d(curWallX + 2, wallY + 2, wuD, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, "outline", { hideBack: true, hideLeft: !isFirstWall });
+              addDoorFaceFeatures(curWallX + 2, wallY + 2, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, uDoorStyle);
+              drawHandle3d(curWallX + wu.width - 35, hY, wuD + 18, uHandleType, "vertical", "right");
+            } else if (wu.doorType === "singleRight") {
+              addBox3d(curWallX + 2, wallY + 2, wuD, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, "outline", { hideBack: true, hideLeft: !isFirstWall });
+              addDoorFaceFeatures(curWallX + 2, wallY + 2, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, uDoorStyle);
+              drawHandle3d(curWallX + 35, hY, wuD + 18, uHandleType, "vertical", "left");
+            } else if (wu.doorType === "double" || wu.doorType === "cornerDouble") {
+              const midX = curWallX + wu.width / 2;
+              addBox3d(curWallX + 2, wallY + 2, wuD, midX - 2, wallY + wuH - 2, wuD + 18, "outline", { hideBack: true, hideLeft: !isFirstWall });
+              addDoorFaceFeatures(curWallX + 2, wallY + 2, midX - 2, wallY + wuH - 2, wuD + 18, uDoorStyle);
+              addBox3d(midX + 2, wallY + 2, wuD, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, "outline", { hideBack: true, hideLeft: true });
+              addDoorFaceFeatures(midX + 2, wallY + 2, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, uDoorStyle);
+              drawHandle3d(midX - 25, hY, wuD + 18, uHandleType, "vertical", "left");
+              drawHandle3d(midX + 25, hY, wuD + 18, uHandleType, "vertical", "right");
+            } else if (wu.doorType === "flipUp") {
+              addBox3d(curWallX + 2, wallY + 2, wuD, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, "outline", { hideBack: true, hideLeft: !isFirstWall });
+              addDoorFaceFeatures(curWallX + 2, wallY + 2, curWallX + wu.width - 2, wallY + wuH - 2, wuD + 18, uDoorStyle);
+              drawHandle3d(curWallX + wu.width / 2, hY, wuD + 18, uHandleType, "horizontal", "center");
+            }
+          }
+
+          curWallX += wu.width;
+        });
+      }
     }
   } else if (params.category === "Wardrobe") {
     const wd = getWardrobeData(params);
 
-    // Plinth
+    // Plinth (visible outer faces only)
     if (wd.plinthH > 0) {
-      addBox3d(30, 0, 30, wd.totalW - 30, wd.plinthH, wd.depth - 30, "interior");
+      addBox3d(30, 0, 30, wd.totalW - 30, wd.plinthH, wd.depth - 30, "interior", { hideTop: true, hideBottom: true, hideBack: true });
     }
 
     // Main Bays
     let curX = 0;
-    wd.mainUnits.forEach((u) => {
+    wd.mainUnits.forEach((u, uIdx) => {
       const uY = wd.plinthH;
-      // Carcass
-      addBox3d(curX, uY, 0, curX + u.width, uY + u.height, wd.depth, "outline");
-      addBox3d(curX, uY, 0, curX + t, uY + u.height, wd.depth, "interior");
-      addBox3d(curX + u.width - t, uY, 0, curX + u.width, uY + u.height, wd.depth, "interior");
-      addBox3d(curX + t, uY, 0, curX + u.width - t, uY + t, wd.depth, "interior");
-      addBox3d(curX + t, uY + u.height - t, 0, curX + u.width - t, uY + u.height, wd.depth, "interior");
-
-      // Drawers at bottom if enabled
-      let dSpaceH = 0;
+      const isFirst = (curX === 0);
+      const isLast = (uIdx === wd.mainUnits.length - 1);
+      const curDoorStyle = u.doorStyle || "slab";
+      const curHandleType = u.handleType || params.handleType || "bar";
       const isConcealed = u.drawerType === "internal";
       const isSliding = u.doorType === "sliding";
 
-      if (u.hasDrawers && (u.drawerCount || 0) > 0) {
-        const dCount = u.drawerCount || 2;
-        const dH = u.drawerHeight || 180;
-        dSpaceH = dCount * dH;
+      // 1. Top panel of bay
+      const topY = uY + u.height;
+      const frontZ = wd.depth + (u.doorType !== "open" ? 18 : 0);
+      addSegment(project3d(curX, topY, 0), project3d(curX + u.width, topY, 0), "outline");
+      addSegment(project3d(curX, topY, frontZ), project3d(curX + u.width, topY, frontZ), "outline");
+      if (isFirst) {
+        addSegment(project3d(0, topY, 0), project3d(0, topY, frontZ), "outline");
+      }
+      if (isLast) {
+        addSegment(project3d(curX + u.width, topY, 0), project3d(curX + u.width, topY, frontZ), "outline");
+      }
 
-        // If not concealed (external drawers) or open carcass: draw exterior drawer facade
-        if (!isConcealed || u.doorType === "open") {
-          const curDoorStyle = u.doorStyle || params.doorStyle;
-          const curHandleType = u.handleType || params.handleType || "bar";
+      // 2. Left gable outline (exposed ONLY if leftmost bay)
+      if (isFirst) {
+        addSegment(project3d(0, uY, 0), project3d(0, topY, 0), "outline");
+        addSegment(project3d(0, uY, 0), project3d(0, uY, frontZ), "outline");
+        addSegment(project3d(0, uY, frontZ), project3d(0, topY, frontZ), "outline");
+      }
+
+      // 3. Bay Facade / Open Interior
+      if (u.doorType === "open") {
+        addSegment(project3d(curX, uY, wd.depth), project3d(curX, topY, wd.depth), "outline");
+        addSegment(project3d(curX + t, uY, wd.depth), project3d(curX + t, topY, wd.depth), "interior");
+        addSegment(project3d(curX + u.width - t, uY, wd.depth), project3d(curX + u.width - t, topY, wd.depth), "interior");
+        addSegment(project3d(curX + u.width, uY, wd.depth), project3d(curX + u.width, topY, wd.depth), "outline");
+        addSegment(project3d(curX, uY, wd.depth), project3d(curX + u.width, uY, wd.depth), "outline");
+        addSegment(project3d(curX + t, uY + t, wd.depth), project3d(curX + u.width - t, uY + t, wd.depth), "interior");
+
+        if (u.internalShelves > 0) {
+          const spacing = (u.height - t * 2) / (u.internalShelves + 1);
+          for (let s = 1; s <= u.internalShelves; s++) {
+            const sy = uY + t + s * spacing;
+            addSegment(project3d(curX + t, sy - t / 2, wd.depth - 15), project3d(curX + u.width - t, sy - t / 2, wd.depth - 15), "interior");
+            addSegment(project3d(curX + t, sy + t / 2, wd.depth - 15), project3d(curX + u.width - t, sy + t / 2, wd.depth - 15), "interior");
+          }
+        }
+      } else {
+        let dSpaceH = 0;
+        if (u.hasDrawers && (u.drawerCount || 0) > 0 && !isConcealed) {
+          const dCount = u.drawerCount || 2;
+          const dH = u.drawerHeight || 180;
+          dSpaceH = dCount * dH;
           for (let di = 0; di < dCount; di++) {
             const dy = uY + t + di * dH + 2;
-            addBox3d(curX + 2, dy, wd.depth, curX + u.width - 2, dy + dH - 4, wd.depth + 18, "outline");
+            addBox3d(curX + 2, dy, wd.depth, curX + u.width - 2, dy + dH - 4, wd.depth + 18, "outline", { hideBack: true, hideLeft: !isFirst });
             addDoorFaceFeatures(curX + 2, dy, curX + u.width - 2, dy + dH - 4, wd.depth + 18, curDoorStyle);
-            // Drawer handle
             const midX = curX + u.width / 2;
             const midY = dy + (dH - 4) / 2;
             drawHandle3d(midX, midY, wd.depth + 18, curHandleType, "horizontal", "center");
           }
         }
-      }
 
-      // Doors:
-      // If sliding door with internal drawers (or no drawers), doors run full carcass height!
-      const doorRunsFullHeight = isSliding && (isConcealed || !u.hasDrawers);
-      const doorStartY = doorRunsFullHeight ? (uY + t + 2) : (uY + t + dSpaceH + 2);
-      const doorH = doorRunsFullHeight ? (u.height - t * 2 - 4) : (u.height - t * 2 - dSpaceH - 4);
+        const doorRunsFullHeight = isSliding && (isConcealed || !u.hasDrawers);
+        const doorStartY = doorRunsFullHeight ? (uY + t + 2) : (uY + t + dSpaceH + 2);
+        const doorH = doorRunsFullHeight ? (u.height - t * 2 - 4) : (u.height - t * 2 - dSpaceH - 4);
 
-      if (doorH > 50 && u.doorType !== "open") {
-        const curDoorStyle = u.doorStyle || params.doorStyle;
-        const curHandleType = u.handleType || params.handleType || "bar";
-        if (isSliding) {
-          // Sliding doors: 2 leaves in offset Z planes
-          const leafW = (u.width - t * 2) / 2 + 18;
-          // Rear leaf at z = wd.depth - 55
-          addBox3d(curX + t, doorStartY, wd.depth - 55, curX + t + leafW, doorStartY + doorH, wd.depth - 37, "outline");
-          addDoorFaceFeatures(curX + t, doorStartY, curX + t + leafW, doorStartY + doorH, wd.depth - 37, curDoorStyle);
-          // Front leaf at z = wd.depth - 20
-          addBox3d(curX + u.width - t - leafW, doorStartY, wd.depth - 20, curX + u.width - t, doorStartY + doorH, wd.depth - 2, "outline");
-          addDoorFaceFeatures(curX + u.width - t - leafW, doorStartY, curX + u.width - t, doorStartY + doorH, wd.depth - 2, curDoorStyle);
-        } else if (u.doorType === "hingedDouble") {
-          const midX = curX + u.width / 2;
-          addBox3d(curX + 2, doorStartY, wd.depth, midX - 2, doorStartY + doorH, wd.depth + 18, "outline");
-          addDoorFaceFeatures(curX + 2, doorStartY, midX - 2, doorStartY + doorH, wd.depth + 18, curDoorStyle);
-          addBox3d(midX + 2, doorStartY, wd.depth, curX + u.width - 2, doorStartY + doorH, wd.depth + 18, "outline");
-          addDoorFaceFeatures(midX + 2, doorStartY, curX + u.width - 2, doorStartY + doorH, wd.depth + 18, curDoorStyle);
-          // Handles
-          const hY = doorStartY + doorH / 2;
-          drawHandle3d(midX - 25, hY, wd.depth + 18, curHandleType, "vertical", "left", doorH > 1500 ? 120 : 70);
-          drawHandle3d(midX + 25, hY, wd.depth + 18, curHandleType, "vertical", "right", doorH > 1500 ? 120 : 70);
-        } else {
-          // Single hinged door
-          addBox3d(curX + 2, doorStartY, wd.depth, curX + u.width - 2, doorStartY + doorH, wd.depth + 18, "outline");
-          addDoorFaceFeatures(curX + 2, doorStartY, curX + u.width - 2, doorStartY + doorH, wd.depth + 18, curDoorStyle);
-          const hY = doorStartY + doorH / 2;
-          drawHandle3d(curX + u.width - 35, hY, wd.depth + 18, curHandleType, "vertical", "right", doorH > 1500 ? 120 : 70);
+        if (doorH > 50) {
+          if (isSliding) {
+            const leafW = (u.width - t * 2) / 2 + 18;
+            addBox3d(curX + t, doorStartY, wd.depth - 55, curX + t + leafW, doorStartY + doorH, wd.depth - 37, "outline", { hideBack: true, hideLeft: !isFirst });
+            addDoorFaceFeatures(curX + t, doorStartY, curX + t + leafW, doorStartY + doorH, wd.depth - 37, curDoorStyle);
+            addBox3d(curX + u.width - t - leafW, doorStartY, wd.depth - 20, curX + u.width - t, doorStartY + doorH, wd.depth - 2, "outline", { hideBack: true, hideLeft: true });
+            addDoorFaceFeatures(curX + u.width - t - leafW, doorStartY, curX + u.width - t, doorStartY + doorH, wd.depth - 2, curDoorStyle);
+          } else if (u.doorType === "hingedDouble") {
+            const midX = curX + u.width / 2;
+            addBox3d(curX + 2, doorStartY, wd.depth, midX - 2, doorStartY + doorH, wd.depth + 18, "outline", { hideBack: true, hideLeft: !isFirst });
+            addDoorFaceFeatures(curX + 2, doorStartY, midX - 2, doorStartY + doorH, wd.depth + 18, curDoorStyle);
+            addBox3d(midX + 2, doorStartY, wd.depth, curX + u.width - 2, doorStartY + doorH, wd.depth + 18, "outline", { hideBack: true, hideLeft: true });
+            addDoorFaceFeatures(midX + 2, doorStartY, curX + u.width - 2, doorStartY + doorH, wd.depth + 18, curDoorStyle);
+            const hY = doorStartY + doorH / 2;
+            drawHandle3d(midX - 25, hY, wd.depth + 18, curHandleType, "vertical", "left", doorH > 1500 ? 120 : 70);
+            drawHandle3d(midX + 25, hY, wd.depth + 18, curHandleType, "vertical", "right", doorH > 1500 ? 120 : 70);
+          } else {
+            addBox3d(curX + 2, doorStartY, wd.depth, curX + u.width - 2, doorStartY + doorH, wd.depth + 18, "outline", { hideBack: true, hideLeft: !isFirst });
+            addDoorFaceFeatures(curX + 2, doorStartY, curX + u.width - 2, doorStartY + doorH, wd.depth + 18, curDoorStyle);
+            const hY = doorStartY + doorH / 2;
+            drawHandle3d(curX + u.width - 35, hY, wd.depth + 18, curHandleType, "vertical", "right", doorH > 1500 ? 120 : 70);
+          }
         }
       }
 
@@ -2237,11 +3141,27 @@ export function generateIsometricView(
 
     // Top Units
     let curTopX = 0;
-    wd.topUnits.forEach((tu) => {
+    wd.topUnits.forEach((tu, tuIdx) => {
       const tuY = wd.plinthH + wd.maxMainH;
-      const curDoorStyle = tu.doorStyle || params.doorStyle;
-      addBox3d(curTopX, tuY, 0, curTopX + tu.width, tuY + tu.height, wd.depth, "outline");
-      addBox3d(curTopX + 2, tuY + 2, wd.depth, curTopX + tu.width - 2, tuY + tu.height - 2, wd.depth + 18, "outline");
+      const isFirstTop = (curTopX === 0);
+      const isLastTop = (tuIdx === wd.topUnits.length - 1);
+      const curDoorStyle = tu.doorStyle || "slab";
+
+      const topY = tuY + tu.height;
+      const frontZ = wd.depth + 18;
+      addSegment(project3d(curTopX, topY, 0), project3d(curTopX + tu.width, topY, 0), "outline");
+      addSegment(project3d(curTopX, topY, frontZ), project3d(curTopX + tu.width, topY, frontZ), "outline");
+      if (isFirstTop) {
+        addSegment(project3d(0, topY, 0), project3d(0, topY, frontZ), "outline");
+        addSegment(project3d(0, tuY, 0), project3d(0, topY, 0), "outline");
+        addSegment(project3d(0, tuY, 0), project3d(0, tuY, frontZ), "outline");
+        addSegment(project3d(0, tuY, frontZ), project3d(0, topY, frontZ), "outline");
+      }
+      if (isLastTop) {
+        addSegment(project3d(curTopX + tu.width, topY, 0), project3d(curTopX + tu.width, topY, frontZ), "outline");
+      }
+
+      addBox3d(curTopX + 2, tuY + 2, wd.depth, curTopX + tu.width - 2, tuY + tu.height - 2, wd.depth + 18, "outline", { hideBack: true, hideLeft: !isFirstTop });
       addDoorFaceFeatures(curTopX + 2, tuY + 2, curTopX + tu.width - 2, tuY + tu.height - 2, wd.depth + 18, curDoorStyle);
       curTopX += tu.width;
     });
@@ -2252,24 +3172,23 @@ export function generateIsometricView(
     const oHang = params.topOverhang || 25;
 
     // Tabletop
-    addBox3d(0, H - topT, 0, W, H, D, "outline");
+    addBox3d(0, H - topT, 0, W, H, D, "outline", { hideBack: true });
 
-    // 4 Legs
+    // 4 Legs: hideTop & hideBottom so no occluded end-caps are drawn!
     const xL = oHang + legIns;
     const xR = W - oHang - legIns - legThick;
     const zB = oHang + legIns;
     const zF = D - oHang - legIns - legThick;
     const legH = H - topT;
 
-    addBox3d(xL, 0, zB, xL + legThick, legH, zB + legThick, "interior");
-    addBox3d(xR, 0, zB, xR + legThick, legH, zB + legThick, "interior");
-    addBox3d(xL, 0, zF, xL + legThick, legH, zF + legThick, "interior");
-    addBox3d(xR, 0, zF, xR + legThick, legH, zF + legThick, "interior");
+    addBox3d(xL, 0, zB, xL + legThick, legH, zB + legThick, "interior", { hideTop: true, hideBottom: true, hideBack: true });
+    addBox3d(xR, 0, zB, xR + legThick, legH, zB + legThick, "interior", { hideTop: true, hideBottom: true, hideBack: true });
+    addBox3d(xL, 0, zF, xL + legThick, legH, zF + legThick, "interior", { hideTop: true, hideBottom: true, hideBack: true });
+    addBox3d(xR, 0, zF, xR + legThick, legH, zF + legThick, "interior", { hideTop: true, hideBottom: true, hideBack: true });
 
-    // Apron rails
+    // Front apron rail: hideTop & hideBottom
     const apronH = params.apronHeight || 65;
-    addBox3d(xL + legThick, legH - apronH, zF, xR, legH, zF + 18, "interior");
-    addBox3d(xL + legThick, legH - apronH, zB, xR, legH, zB + 18, "interior");
+    addBox3d(xL + legThick, legH - apronH, zF, xR, legH, zF + 18, "interior", { hideTop: true, hideBottom: true, hideBack: true });
 
     // Front Drawer if enabled
     if (params.hasDrawers) {
@@ -2277,64 +3196,79 @@ export function generateIsometricView(
       const dH = Math.min(apronH * 0.85, 120);
       const dX = W / 2 - dW / 2;
       const dY = legH - apronH + (apronH - dH) / 2;
-      addBox3d(dX, dY, zF + 15, dX + dW, dY + dH, zF + 25, "outline");
-      // Handle
-      const hP1 = project3d(W / 2 - 30, dY + dH / 2, zF + 35);
-      const hP2 = project3d(W / 2 + 30, dY + dH / 2, zF + 35);
+      addBox3d(dX, dY, zF + 15, dX + dW, dY + dH, zF + 25, "outline", { hideBack: true });
+      const hP1 = project3d(W / 2 - 30, dY + dH / 2, zF + 25 + 8);
+      const hP2 = project3d(W / 2 + 30, dY + dH / 2, zF + 25 + 8);
       addSegment(hP1, hP2, "outline");
     }
   } else {
     // Shelf & Generic Storage Carcass
     if (plinthH > 0) {
       const pRec = params.plinthRecess || 30;
-      addBox3d(pRec, 0, pRec, W - pRec, plinthH, D - pRec, "interior");
+      addBox3d(pRec, 0, pRec, W - pRec, plinthH, D - pRec, "interior", { hideTop: true, hideBottom: true, hideBack: true });
     }
 
     const bodyY = plinthH;
     const bodyH = H - plinthH;
+    const hasDoors = params.category !== "Shelf" && Boolean(params.doorType) && params.doorType !== "none";
 
-    // Outer Carcass Box
-    addBox3d(0, bodyY, 0, W, bodyY + bodyH, D, "outline");
-    addBox3d(0, bodyY, 0, t, bodyY + bodyH, D, "interior");
-    addBox3d(W - t, bodyY, 0, W, bodyY + bodyH, D, "interior");
-    addBox3d(t, bodyY, 0, W - t, bodyY + t, D, "interior");
-    addBox3d(t, bodyY + bodyH - t, 0, W - t, bodyY + bodyH, D, "interior");
+    // Top panel cap
+    const frontZ = D + (hasDoors ? 18 : 0);
+    addSegment(project3d(0, bodyY + bodyH, 0), project3d(W, bodyY + bodyH, 0), "outline");
+    addSegment(project3d(0, bodyY + bodyH, frontZ), project3d(W, bodyY + bodyH, frontZ), "outline");
+    addSegment(project3d(0, bodyY + bodyH, 0), project3d(0, bodyY + bodyH, frontZ), "outline");
+    addSegment(project3d(W, bodyY + bodyH, 0), project3d(W, bodyY + bodyH, frontZ), "outline");
 
-    // Shelves
-    const shelfCount = params.internalShelves ?? 2;
-    if (shelfCount > 0) {
-      const spacing = (bodyH - t * 2) / (shelfCount + 1);
-      for (let s = 1; s <= shelfCount; s++) {
-        const sy = bodyY + t + s * spacing;
-        addBox3d(t, sy - t / 2, 0, W - t, sy + t / 2, D - 15, "interior");
+    // Exposed Left gable
+    addSegment(project3d(0, bodyY, 0), project3d(0, bodyY + bodyH, 0), "outline");
+    addSegment(project3d(0, bodyY, 0), project3d(0, bodyY, frontZ), "outline");
+    addSegment(project3d(0, bodyY, frontZ), project3d(0, bodyY + bodyH, frontZ), "outline");
+
+    // Bottom silhouette front edge
+    addSegment(project3d(0, bodyY, frontZ), project3d(W, bodyY, frontZ), "outline");
+
+    if (!hasDoors) {
+      // Open Shelf
+      addSegment(project3d(t, bodyY, D), project3d(t, bodyY + bodyH, D), "interior");
+      addSegment(project3d(W - t, bodyY, D), project3d(W - t, bodyY + bodyH, D), "interior");
+      addSegment(project3d(0, bodyY, D), project3d(0, bodyY + bodyH, D), "outline");
+      addSegment(project3d(W, bodyY, D), project3d(W, bodyY + bodyH, D), "outline");
+
+      addSegment(project3d(t, bodyY + t, D), project3d(W - t, bodyY + t, D), "interior");
+      addSegment(project3d(t, bodyY + bodyH - t, D), project3d(W - t, bodyY + bodyH - t, D), "interior");
+
+      const shelfCount = params.internalShelves ?? 2;
+      if (shelfCount > 0) {
+        const spacing = (bodyH - t * 2) / (shelfCount + 1);
+        for (let s = 1; s <= shelfCount; s++) {
+          const sy = bodyY + t + s * spacing;
+          addSegment(project3d(t, sy - t / 2, D - 15), project3d(W - t, sy - t / 2, D - 15), "interior");
+          addSegment(project3d(t, sy + t / 2, D - 15), project3d(W - t, sy + t / 2, D - 15), "interior");
+        }
       }
-    }
 
-    // Vertical Divider Columns
-    const cols = params.internalColumns || 1;
-    if (cols > 1) {
-      const colW = (W - t * 2) / cols;
-      for (let c = 1; c < cols; c++) {
-        const px = t + c * colW;
-        addBox3d(px - t / 2, bodyY + t, 0, px + t / 2, bodyY + bodyH - t, D - 15, "interior");
+      const cols = params.internalColumns || 1;
+      if (cols > 1) {
+        const colW = (W - t * 2) / cols;
+        for (let c = 1; c < cols; c++) {
+          const px = t + c * colW;
+          addSegment(project3d(px - t / 2, bodyY + t, D - 15), project3d(px - t / 2, bodyY + bodyH - t, D - 15), "interior");
+          addSegment(project3d(px + t / 2, bodyY + t, D - 15), project3d(px + t / 2, bodyY + bodyH - t, D - 15), "interior");
+        }
       }
-    }
-
-    // Doors if enabled (Shelf usually open)
-    if (params.category !== "Shelf" && params.doorType) {
-      const frontZ = D;
+    } else {
       const doorGap = 2.5;
       const midX = W / 2;
-      const curDoorStyle = params.doorStyle;
+      const curDoorStyle = params.doorStyle || "slab";
       const curHandleType = params.handleType || "bar";
-      addBox3d(doorGap, bodyY + doorGap, frontZ, midX - doorGap / 2, bodyY + bodyH - doorGap, frontZ + 18, "outline");
-      addDoorFaceFeatures(doorGap, bodyY + doorGap, midX - doorGap / 2, bodyY + bodyH - doorGap, frontZ + 18, curDoorStyle);
-      addBox3d(midX + doorGap / 2, bodyY + doorGap, frontZ, W - doorGap, bodyY + bodyH - doorGap, frontZ + 18, "outline");
-      addDoorFaceFeatures(midX + doorGap / 2, bodyY + doorGap, W - doorGap, bodyY + bodyH - doorGap, frontZ + 18, curDoorStyle);
+      addBox3d(doorGap, bodyY + doorGap, D, midX - doorGap / 2, bodyY + bodyH - doorGap, D + 18, "outline", { hideBack: true });
+      addDoorFaceFeatures(doorGap, bodyY + doorGap, midX - doorGap / 2, bodyY + bodyH - doorGap, D + 18, curDoorStyle);
+      addBox3d(midX + doorGap / 2, bodyY + doorGap, D, W - doorGap, bodyY + bodyH - doorGap, D + 18, "outline", { hideBack: true, hideLeft: true });
+      addDoorFaceFeatures(midX + doorGap / 2, bodyY + doorGap, W - doorGap, bodyY + bodyH - doorGap, D + 18, curDoorStyle);
 
       const hY = bodyY + bodyH / 2;
-      drawHandle3d(midX - 35, hY, frontZ + 18, curHandleType, "vertical", "left");
-      drawHandle3d(midX + 35, hY, frontZ + 18, curHandleType, "vertical", "right");
+      drawHandle3d(midX - 35, hY, D + 18, curHandleType, "vertical", "left");
+      drawHandle3d(midX + 25, hY, D + 18, curHandleType, "vertical", "right");
     }
   }
 

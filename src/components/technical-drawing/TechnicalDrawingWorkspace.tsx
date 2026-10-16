@@ -199,6 +199,15 @@ export default function TechnicalDrawingWorkspace({
     return () => clearTimeout(timer);
   }, [fitSheetToScreen]);
 
+  // Window resize handler to maintain responsive drawing sheet scale
+  useEffect(() => {
+    const handleResize = () => {
+      fitSheetToScreen();
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [fitSheetToScreen]);
+
   // Native non-passive Wheel listener for cursor-anchored zoom
   useEffect(() => {
     const canvasEl = canvasRef.current;

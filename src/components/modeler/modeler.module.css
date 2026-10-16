@@ -252,7 +252,7 @@
 
 .categoryPills {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
   gap: 0.35rem;
 }
 
@@ -344,7 +344,7 @@
 
 .materialGrid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 0.5rem;
 }
 
@@ -480,23 +480,128 @@
   color: #fff;
 }
 
+/* Responsive Studio Drawer & Canvas Mode */
 @media (max-width: 900px) {
   .studioContainer {
-    position: static;
-    flex-direction: column;
-    height: auto;
-    min-height: calc(100vh - 4rem);
+    position: fixed;
+    top: 4rem;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100vw;
+    height: calc(100vh - 4rem);
+    display: flex;
+    overflow: hidden;
   }
 
   .canvasArea {
-    height: 55vh;
+    height: 100%;
+    width: 100%;
+    flex: 1;
   }
 
   .sidebarControls {
-    width: 100%;
-    height: auto;
-    border-left: none;
-    border-top: 1px solid var(--borderSubtle);
+    position: fixed;
+    top: 4rem;
+    right: 0;
+    bottom: 0;
+    width: min(100vw, 420px);
+    height: calc(100vh - 4rem);
+    max-height: calc(100vh - 4rem);
+    z-index: 150;
+    transform: translateX(100%);
+    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: -10px 0 35px rgba(0, 0, 0, 0.75);
+    border-left: 1px solid var(--borderSubtle);
+    background: rgba(14, 16, 22, 0.98);
+  }
+
+  .sidebarControlsOpen {
+    transform: translateX(0);
+  }
+}
+
+.sidebarBackdrop {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .sidebarBackdrop {
+    display: block;
+    position: fixed;
+    top: 4rem;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 140;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+
+  .sidebarBackdropActive {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.mobileInspectorToggleBtn {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .mobileInspectorToggleBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    position: absolute;
+    bottom: 1.25rem;
+    right: 1.25rem;
+    padding: 0.6rem 1rem;
+    background: var(--accent);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 9999px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    box-shadow: 0 6px 20px rgba(41, 114, 245, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.15);
+    cursor: pointer;
+    z-index: 35;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .mobileInspectorToggleBtn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(41, 114, 245, 0.65);
+  }
+}
+
+.sidebarCloseBtn {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .sidebarCloseBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #f1f5f9;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .sidebarCloseBtn:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
   }
 }
 
@@ -573,19 +678,19 @@
 
 .segmentedGrid4 {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(65px, 1fr));
   gap: 0.35rem;
 }
 
 .segmentedGrid5 {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(55px, 1fr));
   gap: 0.35rem;
 }
 
 .segmentedGrid6 {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(50px, 1fr));
   gap: 0.3rem;
 }
 
@@ -1380,4 +1485,122 @@
   font-size: 0.74rem;
   font-weight: 700;
   color: #60a5fa;
+}
+
+/* Floating Toolbars Responsiveness on Tablets & Mobile */
+@media (max-width: 768px) {
+  .topOverlayBar {
+    top: 0.65rem;
+    left: 0.65rem;
+    right: 0.65rem;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+
+  .backBtn {
+    padding: 0.35rem 0.6rem;
+    font-size: 0.72rem;
+  }
+
+  .projectBadge {
+    padding: 0.32rem 0.55rem;
+    font-size: 0.7rem;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workspaceModeSwitcher {
+    margin-left: 0;
+  }
+
+  .workspaceModeBtn {
+    padding: 0.32rem 0.55rem;
+    font-size: 0.72rem;
+  }
+
+  /* CAD Action Toolbar: Horizontal swipeable pill strip */
+  .cadActionToolbar {
+    top: 3.5rem;
+    left: 0.65rem;
+    right: 0.65rem;
+    max-width: calc(100vw - 1.3rem);
+    min-width: 0;
+    width: auto;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 0.35rem 0.5rem;
+    gap: 0.35rem;
+    border-radius: 8px;
+  }
+
+  .cadActionToolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .cadActionBtn {
+    width: auto;
+    padding: 0.35rem 0.55rem;
+    font-size: 0.7rem;
+    flex-shrink: 0;
+  }
+
+  .cadActionDivider {
+    width: 1px;
+    height: 18px;
+    margin: 0 0.15rem;
+    flex-shrink: 0;
+  }
+
+  .cadActionLabel {
+    display: none;
+  }
+
+  .cadActionHelperHint {
+    display: none;
+  }
+
+  /* Viewport Bottom Toolbar */
+  .viewportToolbar {
+    bottom: 0.75rem;
+    left: 0.65rem;
+    max-width: calc(100vw - 160px);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 0.28rem 0.4rem;
+    gap: 0.3rem;
+  }
+
+  .viewportToolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .toolBtn {
+    padding: 0.32rem 0.48rem;
+    font-size: 0.7rem;
+    flex-shrink: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .backBtn span {
+    display: none;
+  }
+
+  .projectBadge {
+    display: none;
+  }
+
+  .toolBtn span {
+    display: none;
+  }
+
+  .toolBtn {
+    padding: 0.38rem;
+  }
 }

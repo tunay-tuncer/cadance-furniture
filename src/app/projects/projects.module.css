@@ -63,7 +63,7 @@
 
 .projectsGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
   gap: 1.5rem;
   width: 100%;
 }
@@ -270,7 +270,7 @@
 
 .skeletonGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
   gap: 1.5rem;
   width: 100%;
 }
@@ -290,6 +290,39 @@
 
 @media (max-width: 768px) {
   .pageContainer {
-    padding: 5.5rem 1.25rem 2rem;
+    padding: 5rem 1rem 2rem;
+    gap: 1.5rem;
+  }
+
+  .headerSection {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
+  }
+
+  .pageTitle {
+    font-size: 1.45rem;
+  }
+
+  .statsRow {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .statBadge {
+    flex: 1;
+    min-width: 120px;
+    justify-content: center;
+  }
+
+  .projectsGrid,
+  .skeletonGrid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .projectCard {
+    padding: 1.25rem;
   }
 }

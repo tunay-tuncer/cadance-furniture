@@ -25,6 +25,7 @@ import {
   Md3dRotation,
   MdScreenRotation,
   MdEditNote,
+  MdClose,
 } from "react-icons/md";
 import styles from "./modeler.module.css";
 import { TechnicalDrawingSettings } from "./FurnitureMesh";
@@ -38,6 +39,8 @@ interface ModelerControlsProps {
   saveSuccess?: boolean;
   inspectorTab?: "3d" | "2d";
   setInspectorTab?: (tab: "3d" | "2d") => void;
+  isMobileOpen?: boolean;
+  onCloseMobile?: () => void;
 }
 
 const CATEGORIES: FurnitureParams["category"][] = [
@@ -64,6 +67,8 @@ export default function ModelerControls({
   saveSuccess,
   inspectorTab: propInspectorTab,
   setInspectorTab: propSetInspectorTab,
+  isMobileOpen = false,
+  onCloseMobile,
 }: ModelerControlsProps) {
   const [internalTab, setInternalTab] = useState<"3d" | "2d">("3d");
   const activeTab = propInspectorTab ?? internalTab;
@@ -136,7 +141,7 @@ export default function ModelerControls({
   };
 
   const addKitchenUnit = (
-    type: "base" | "wall" | "corner-base" | "corner-wall",
+    type: "base" | "wall" | "corner-base" | "corner-wall" | "tall" | "fridge" | "dishwasher",
     runAxis?: "run0" | "run1"
   ) => {
     const isCorner = type === "corner-base" || type === "corner-wall";
@@ -157,19 +162,28 @@ export default function ModelerControls({
           ? `Corner Wall ${existingCount + 1} (90°)`
           : type === "base"
           ? `Base Cabinet ${existingCount + 1}`
+          : type === "tall"
+          ? `Tall Pantry ${existingCount + 1}`
+          : type === "fridge"
+          ? `Fridge Housing ${existingCount + 1}`
+          : type === "dishwasher"
+          ? `Dishwasher Unit ${existingCount + 1}`
           : `Upper Wall Unit ${existingCount + 1}${resolvedRunAxis === "run1" ? " (Turned)" : ""}`,
       type,
       runAxis: type === "wall" ? (resolvedRunAxis || "run0") : undefined,
       orientation: isCorner ? "corner-right" : "straight",
       materialType: selectedUnit?.materialType || params.materialType,
-      width: type === "corner-base" ? 900 : type === "corner-wall" ? 600 : 600,
-      height: 720,
-      depth: type === "corner-base" ? 900 : type === "corner-wall" ? 600 : type === "base" ? 600 : 350,
+      width: type === "corner-base" ? 900 : type === "corner-wall" ? 600 : type === "fridge" ? 700 : 600,
+      height: type === "tall" ? 2100 : type === "fridge" ? 2000 : 720,
+      depth: type === "corner-base" ? 900 : type === "corner-wall" ? 600 : (type === "base" || type === "tall" || type === "dishwasher") ? 600 : type === "fridge" ? 650 : 350,
       cornerDepth: isCorner ? (type === "corner-wall" ? 350 : 600) : undefined,
       bottomOffset: (type === "wall" || type === "corner-wall") ? 600 : undefined,
-      doorType: isCorner ? "cornerDouble" : "singleLeft",
+      doorType: isCorner ? "cornerDouble" : (type === "tall" ? "double" : "singleLeft"),
+      doorStyle: selectedUnit?.doorStyle || "slab",
+      hasNoBottom: type === "fridge" || type === "dishwasher",
+      hasNoCountertop: type === "tall" || type === "fridge",
       drawerCount: 0,
-      internalShelves: isCorner ? (type === "corner-wall" ? 2 : 1) : 2,
+      internalShelves: isCorner ? (type === "corner-wall" ? 2 : 1) : (type === "tall" ? 4 : (type === "fridge" || type === "dishwasher" ? 0 : 2)),
       handleType: selectedUnit?.handleType || "bar",
       handleFinish: selectedUnit?.handleFinish || "black",
     };
@@ -293,15 +307,28 @@ export default function ModelerControls({
   const metrics = calculateProductionMetrics(params);
 
   return (
-    <aside className={styles.sidebarControls}>
+    <aside className={`${styles.sidebarControls} ${isMobileOpen ? styles.sidebarControlsOpen : ""}`}>
       <div className={styles.sidebarHeader}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", marginBottom: "0.25rem" }}>
           <h2 className={styles.sidebarTitle}>
             {activeTab === "3d" ? "CAD Inspector" : "2D Drawing Settings"}
           </h2>
-          <span style={{ fontSize: "0.72rem", color: "var(--accent)", fontWeight: 600 }}>
-            {params.category === "Cabinet" ? "KITCHEN STUDIO" : params.category === "Wardrobe" ? "WARDROBE STUDIO" : "PARAMETRIC CAD"}
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <span style={{ fontSize: "0.72rem", color: "var(--accent)", fontWeight: 600 }}>
+              {params.category === "Cabinet" ? "KITCHEN STUDIO" : params.category === "Wardrobe" ? "WARDROBE STUDIO" : "PARAMETRIC CAD"}
+            </span>
+            {onCloseMobile && (
+              <button
+                type="button"
+                className={styles.sidebarCloseBtn}
+                onClick={onCloseMobile}
+                title="Close Inspector"
+                aria-label="Close Inspector"
+              >
+                <MdClose size={18} />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Tab Switcher between 3D Model Parameters & 2D Technical Sheet Settings */}
@@ -724,8 +751,37 @@ export default function ModelerControls({
                               }}
                               style={{ cursor: "pointer", accentColor: "#0284c7" }}
                             />
-                            <span>{u.type === "corner-base" ? "🔄" : u.type === "corner-wall" ? "🔃" : u.type === "base" ? "📦" : "⬆️"}</span>
-                            <span className={styles.treeUnitName}>{u.name || (u.type === "corner-base" ? "Corner Base" : u.type === "corner-wall" ? "Corner Wall" : u.type === "base" ? "Base" : "Wall")}</span>
+                            <span>
+                              {u.type === "corner-base"
+                                ? "🔄"
+                                : u.type === "corner-wall"
+                                ? "🔃"
+                                : u.type === "base"
+                                ? "📦"
+                                : u.type === "tall"
+                                ? "🚪"
+                                : u.type === "fridge"
+                                ? "🧊"
+                                : u.type === "dishwasher"
+                                ? "🧼"
+                                : "⬆️"}
+                            </span>
+                            <span className={styles.treeUnitName}>
+                              {u.name ||
+                                (u.type === "corner-base"
+                                  ? "Corner Base"
+                                  : u.type === "corner-wall"
+                                  ? "Corner Wall"
+                                  : u.type === "base"
+                                  ? "Base"
+                                  : u.type === "tall"
+                                  ? "Tall Pantry"
+                                  : u.type === "fridge"
+                                  ? "Fridge Housing"
+                                  : u.type === "dishwasher"
+                                  ? "Dishwasher"
+                                  : "Wall")}
+                            </span>
                             <span className={styles.treeUnitDim}>({u.width}×{u.height}×{u.depth}mm)</span>
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
@@ -760,130 +816,16 @@ export default function ModelerControls({
                         {/* Nested Divisions (Shown for Selected Unit) */}
                         {isSelected && (
                           <div className={styles.treeChildren}>
-                            {/* Node 1: Carcass Dimensions */}
-                            <div className={`${styles.treeNode} ${selectedSubItem === "carcass" ? styles.treeNodeActive : ""}`}>
+                            {/* Node 1: Carcass Dimensions Summary */}
+                            <div className={styles.treeNode}>
                               <div
                                 className={styles.treeNodeRow}
-                                onClick={() => setSelectedSubItem(selectedSubItem === "carcass" ? "" : "carcass")}
+                                onClick={() => setOpenSections((prev) => ({ ...prev, dimensions: true }))}
+                                title="Adjust dimensions in Dimensions section below"
                               >
                                 <span>📏 Carcass Dimensions</span>
                                 <span className={styles.treeNodeBadge}>{u.width} × {u.height} × {u.depth} mm</span>
                               </div>
-                              {selectedSubItem === "carcass" && (
-                                <div className={styles.treeNodeDrawer}>
-                                  <div className={styles.sliderHead}>
-                                    <span className={styles.sliderName}>
-                                      {u.type === "corner-base" || u.type === "corner-wall" ? "Width (Wing 1)" : "Width (X)"}
-                                    </span>
-                                    <CadNumberInput
-                                      value={u.width}
-                                      onChange={(val) => updateSelectedUnit({ width: val })}
-                                      min={300}
-                                      max={1400}
-                                      unit="mm"
-                                    />
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min={300}
-                                    max={1400}
-                                    step={10}
-                                    value={u.width}
-                                    onChange={(e) => updateSelectedUnit({ width: Number(e.target.value) })}
-                                    className={styles.rangeSlider}
-                                  />
-
-                                  <div className={styles.sliderHead} style={{ marginTop: "0.4rem" }}>
-                                    <span className={styles.sliderName}>Height (Y)</span>
-                                    <CadNumberInput
-                                      value={u.height}
-                                      onChange={(val) => updateSelectedUnit({ height: val })}
-                                      min={350}
-                                      max={1200}
-                                      unit="mm"
-                                    />
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min={350}
-                                    max={1200}
-                                    step={10}
-                                    value={u.height}
-                                    onChange={(e) => updateSelectedUnit({ height: Number(e.target.value) })}
-                                    className={styles.rangeSlider}
-                                  />
-
-                                  <div className={styles.sliderHead} style={{ marginTop: "0.4rem" }}>
-                                    <span className={styles.sliderName}>
-                                      {u.type === "corner-base" || u.type === "corner-wall" ? "Length (Wing 2)" : "Depth (Z)"}
-                                    </span>
-                                    <CadNumberInput
-                                      value={u.depth}
-                                      onChange={(val) => updateSelectedUnit({ depth: val })}
-                                      min={250}
-                                      max={1400}
-                                      unit="mm"
-                                    />
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min={250}
-                                    max={1400}
-                                    step={10}
-                                    value={u.depth}
-                                    onChange={(e) => updateSelectedUnit({ depth: Number(e.target.value) })}
-                                    className={styles.rangeSlider}
-                                  />
-
-                                  {(u.type === "corner-base" || u.type === "corner-wall") && (
-                                    <>
-                                      <div className={styles.sliderHead} style={{ marginTop: "0.4rem" }}>
-                                        <span className={styles.sliderName}>Carcass Return Depth</span>
-                                        <CadNumberInput
-                                          value={u.cornerDepth ?? (u.type === "corner-wall" ? 350 : 600)}
-                                          onChange={(val) => updateSelectedUnit({ cornerDepth: val })}
-                                          min={200}
-                                          max={Math.min(u.width, u.depth) - 50}
-                                          unit="mm"
-                                        />
-                                      </div>
-                                      <input
-                                        type="range"
-                                        min={200}
-                                        max={Math.min(u.width, u.depth) - 50}
-                                        step={10}
-                                        value={u.cornerDepth ?? (u.type === "corner-wall" ? 350 : 600)}
-                                        onChange={(e) => updateSelectedUnit({ cornerDepth: Number(e.target.value) })}
-                                        className={styles.rangeSlider}
-                                      />
-                                    </>
-                                  )}
-
-                                  {(u.type === "wall" || u.type === "corner-wall") && (
-                                    <>
-                                      <div className={styles.sliderHead} style={{ marginTop: "0.4rem" }}>
-                                        <span className={styles.sliderName}>Dist. from Bottom Cabinet</span>
-                                        <CadNumberInput
-                                          value={u.bottomOffset ?? 600}
-                                          onChange={(val) => updateSelectedUnit({ bottomOffset: val })}
-                                          min={250}
-                                          max={1100}
-                                          unit="mm"
-                                        />
-                                      </div>
-                                      <input
-                                        type="range"
-                                        min={250}
-                                        max={1100}
-                                        step={10}
-                                        value={u.bottomOffset ?? 600}
-                                        onChange={(e) => updateSelectedUnit({ bottomOffset: Number(e.target.value) })}
-                                        className={styles.rangeSlider}
-                                      />
-                                    </>
-                                  )}
-                                </div>
-                              )}
                             </div>
 
                             {/* Node 2: Door Facade */}
@@ -921,31 +863,7 @@ export default function ModelerControls({
                                     ))}
                                   </div>
 
-                                  {u.doorType !== "none" && (
-                                    <>
-                                      <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.45rem", marginBottom: "0.25rem", fontWeight: 600 }}>
-                                        Kapak Modeli (Door Style)
-                                      </div>
-                                      <div className={styles.segmentedGrid3}>
-                                        {[
-                                          { id: "slab", label: "Slab (Flat)" },
-                                          { id: "slimShaker", label: "Slim Shaker" },
-                                          { id: "shaker", label: "Classic Shaker" },
-                                          { id: "fluted", label: "CNC Fluted" },
-                                          { id: "framedGlass", label: "Framed Glass" },
-                                        ].map((st) => (
-                                          <button
-                                            key={st.id}
-                                            type="button"
-                                            onClick={() => updateSelectedUnit({ doorStyle: st.id as KitchenCabinetUnit["doorStyle"] })}
-                                            className={`${styles.segmentedBtn} ${(u.doorStyle || "slab") === st.id ? styles.segmentedBtnActive : ""}`}
-                                          >
-                                            {st.label}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    </>
-                                  )}
+
                                 </div>
                               )}
                             </div>
@@ -1106,6 +1024,33 @@ export default function ModelerControls({
                       <span>+ Add Wall (Turned Run 1)</span>
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => addKitchenUnit("tall")}
+                    className={styles.unitAddBtn}
+                    style={{ borderColor: "rgba(251, 146, 60, 0.4)", color: "#fb923c" }}
+                  >
+                    <MdAdd size={14} />
+                    <span>+ Add Tall / Pantry</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => addKitchenUnit("fridge")}
+                    className={styles.unitAddBtn}
+                    style={{ borderColor: "rgba(34, 211, 238, 0.4)", color: "#22d3ee" }}
+                  >
+                    <MdAdd size={14} />
+                    <span>+ Add Fridge</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => addKitchenUnit("dishwasher")}
+                    className={styles.unitAddBtn}
+                    style={{ borderColor: "rgba(129, 140, 248, 0.4)", color: "#818cf8" }}
+                  >
+                    <MdAdd size={14} />
+                    <span>+ Add Dishwasher</span>
+                  </button>
                 </div>
               </div>
             )}
@@ -1189,58 +1134,16 @@ export default function ModelerControls({
                         {/* Nested Divisions (Shown for Selected Division) */}
                         {isSelected && (
                           <div className={styles.treeChildren}>
-                            {/* Node 1: Carcass Dimensions */}
-                            <div className={`${styles.treeNode} ${selectedSubItem === "carcass" ? styles.treeNodeActive : ""}`}>
+                            {/* Node 1: Division Dimensions Summary */}
+                            <div className={styles.treeNode}>
                               <div
                                 className={styles.treeNodeRow}
-                                onClick={() => setSelectedSubItem(selectedSubItem === "carcass" ? "" : "carcass")}
+                                onClick={() => setOpenSections((prev) => ({ ...prev, dimensions: true }))}
+                                title="Adjust dimensions in Dimensions section below"
                               >
                                 <span>📏 Division Dimensions</span>
                                 <span className={styles.treeNodeBadge}>{u.width} × {u.height} mm</span>
                               </div>
-                              {selectedSubItem === "carcass" && (
-                                <div className={styles.treeNodeDrawer}>
-                                  <div className={styles.sliderHead}>
-                                    <span className={styles.sliderName}>Width (X)</span>
-                                    <CadNumberInput
-                                      value={u.width}
-                                      onChange={(val) => updateSelectedWardrobeUnit({ width: val })}
-                                      min={400}
-                                      max={1400}
-                                      unit="mm"
-                                    />
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min={400}
-                                    max={1400}
-                                    step={20}
-                                    value={u.width}
-                                    onChange={(e) => updateSelectedWardrobeUnit({ width: Number(e.target.value) })}
-                                    className={styles.rangeSlider}
-                                  />
-
-                                  <div className={styles.sliderHead} style={{ marginTop: "0.4rem" }}>
-                                    <span className={styles.sliderName}>Height (Y)</span>
-                                    <CadNumberInput
-                                      value={u.height}
-                                      onChange={(val) => updateSelectedWardrobeUnit({ height: val })}
-                                      min={u.type === "top" ? 300 : 1600}
-                                      max={u.type === "top" ? 900 : 2600}
-                                      unit="mm"
-                                    />
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min={u.type === "top" ? 300 : 1600}
-                                    max={u.type === "top" ? 900 : 2600}
-                                    step={20}
-                                    value={u.height}
-                                    onChange={(e) => updateSelectedWardrobeUnit({ height: Number(e.target.value) })}
-                                    className={styles.rangeSlider}
-                                  />
-                                </div>
-                              )}
                             </div>
 
                             {/* Node 2: Door Style & Mirror */}
@@ -1277,27 +1180,7 @@ export default function ModelerControls({
 
                                   {u.doorType !== "open" && (
                                     <>
-                                      <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.45rem", marginBottom: "0.25rem", fontWeight: 600 }}>
-                                        Kapak Modeli (Door Style)
-                                      </div>
-                                      <div className={styles.segmentedGrid3}>
-                                        {[
-                                          { id: "slab", label: "Slab (Flat)" },
-                                          { id: "slimShaker", label: "Slim Shaker" },
-                                          { id: "shaker", label: "Classic Shaker" },
-                                          { id: "fluted", label: "CNC Fluted" },
-                                          { id: "framedGlass", label: "Framed Glass" },
-                                        ].map((st) => (
-                                          <button
-                                            key={st.id}
-                                            type="button"
-                                            onClick={() => updateSelectedWardrobeUnit({ doorStyle: st.id as WardrobeUnit["doorStyle"] })}
-                                            className={`${styles.segmentedBtn} ${(u.doorStyle || "slab") === st.id ? styles.segmentedBtnActive : ""}`}
-                                          >
-                                            {st.label}
-                                          </button>
-                                        ))}
-                                      </div>
+
 
                                       <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.45rem", marginBottom: "0.25rem", fontWeight: 600 }}>
                                         Ayna Seçeneği (Mirror Option)
@@ -1572,45 +1455,88 @@ export default function ModelerControls({
                         { id: "corner-base", label: "90° Corner Base" },
                         { id: "wall", label: "Straight Wall" },
                         { id: "corner-wall", label: "90° Corner Wall" },
+                        { id: "tall", label: "Full Height (Pantry)" },
+                        { id: "fridge", label: "Fridge Housing" },
+                        { id: "dishwasher", label: "Dishwasher" },
                       ].map((t) => (
                         <button
                           key={t.id}
                           type="button"
                           onClick={() => {
-                            if (t.id === "corner-base") {
+                            if (t.id === "tall") {
+                              updateSelectedUnit({
+                                type: "tall",
+                                orientation: "straight",
+                                width: selectedUnit.width || 600,
+                                height: selectedUnit.height < 1200 ? 2100 : selectedUnit.height,
+                                depth: selectedUnit.depth < 500 ? 600 : selectedUnit.depth,
+                                hasNoBottom: false,
+                                hasNoCountertop: true,
+                              });
+                            } else if (t.id === "fridge") {
+                              updateSelectedUnit({
+                                type: "fridge",
+                                orientation: "straight",
+                                width: selectedUnit.width < 600 ? 700 : selectedUnit.width,
+                                height: selectedUnit.height < 1200 ? 2000 : selectedUnit.height,
+                                depth: selectedUnit.depth < 500 ? 650 : selectedUnit.depth,
+                                hasNoBottom: true,
+                                hasNoCountertop: true,
+                              });
+                            } else if (t.id === "dishwasher") {
+                              updateSelectedUnit({
+                                type: "dishwasher",
+                                orientation: "straight",
+                                width: 600,
+                                height: 720,
+                                depth: 600,
+                                hasNoBottom: true,
+                                hasNoCountertop: false,
+                              });
+                            } else if (t.id === "corner-base") {
                               updateSelectedUnit({
                                 type: "corner-base",
                                 orientation: "corner-right",
                                 width: 900,
                                 depth: 900,
                                 doorType: "cornerDouble",
+                                hasNoBottom: false,
+                                hasNoCountertop: false,
                               });
                             } else if (t.id === "corner-wall") {
                               updateSelectedUnit({
                                 type: "corner-wall",
                                 orientation: "corner-right",
                                 width: 600,
-                                height: selectedUnit.height || 720,
+                                height: selectedUnit.height > 1200 ? 720 : (selectedUnit.height || 720),
                                 depth: 600,
                                 doorType: "cornerDouble",
                                 internalShelves: 2,
+                                hasNoBottom: false,
+                                hasNoCountertop: false,
                               });
                             } else if (t.id === "base") {
                               updateSelectedUnit({
                                 type: "base",
                                 orientation: "straight",
-                                width: selectedUnit.width === 900 || selectedUnit.width === 600 ? 600 : selectedUnit.width,
+                                width: selectedUnit.width === 900 ? 600 : selectedUnit.width,
+                                height: selectedUnit.height > 1200 ? 720 : selectedUnit.height,
                                 depth: 600,
                                 doorType: "singleLeft",
+                                hasNoBottom: false,
+                                hasNoCountertop: false,
                               });
                             } else {
                               updateSelectedUnit({
                                 type: "wall",
                                 runAxis: selectedUnit.runAxis || "run0",
                                 orientation: "straight",
-                                width: selectedUnit.width === 900 || selectedUnit.width === 600 ? 600 : selectedUnit.width,
+                                width: selectedUnit.width === 900 ? 600 : selectedUnit.width,
+                                height: selectedUnit.height > 1200 ? 720 : selectedUnit.height,
                                 depth: 350,
                                 doorType: "singleLeft",
+                                hasNoBottom: false,
+                                hasNoCountertop: false,
                               });
                             }
                           }}
@@ -1672,34 +1598,7 @@ export default function ModelerControls({
                     </div>
                   )}
 
-                  {/* Individual Cabinet Material Selector */}
-                  <div className={styles.controlGroup}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.3rem" }}>
-                      <label className={styles.groupLabel} style={{ marginBottom: 0 }}>
-                        {isMultiSelected ? `Material (${selectedUnitIds.length} Selected)` : `Cabinet Material: ${selectedUnit.name}`}
-                      </label>
-                      <span style={{ fontSize: "0.72rem", color: "#38bdf8", fontWeight: 700 }}>
-                        {MATERIALS.find((m) => m.id === (selectedUnit.materialType || params.materialType))?.name}
-                      </span>
-                    </div>
-                    <div className={styles.materialGrid}>
-                      {MATERIALS.map((m) => {
-                        const activeMat = selectedUnit.materialType || params.materialType;
-                        const isActive = activeMat === m.id;
-                        return (
-                          <button
-                            key={m.id}
-                            type="button"
-                            onClick={() => updateSelectedUnit({ materialType: m.id })}
-                            className={`${styles.materialOption} ${isActive ? styles.materialOptionActive : ""}`}
-                          >
-                            <span className={styles.materialSwatch} style={{ backgroundColor: m.color }} />
-                            <span className={styles.materialName}>{m.name}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+
 
                   {/* Selected Kitchen Cabinet Dimensions */}
                   <div className={styles.sliderCard}>
@@ -1735,14 +1634,14 @@ export default function ModelerControls({
                         value={selectedUnit.height}
                         onChange={(val) => updateSelectedUnit({ height: val })}
                         min={350}
-                        max={1200}
+                        max={selectedUnit.type === "tall" || selectedUnit.type === "fridge" ? 2600 : 1200}
                         unit="mm"
                       />
                     </div>
                     <input
                       type="range"
                       min={350}
-                      max={1200}
+                      max={selectedUnit.type === "tall" || selectedUnit.type === "fridge" ? 2600 : 1200}
                       step={10}
                       value={selectedUnit.height}
                       onChange={(e) => updateSelectedUnit({ height: Number(e.target.value) })}
@@ -1831,6 +1730,109 @@ export default function ModelerControls({
                       </div>
                     </div>
                   )}
+
+                  {/* Selected Unit Carcass Construction & Countertop Flags */}
+                  <div style={{ marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    <div
+                      className={styles.toggleRow}
+                      onClick={() => updateSelectedUnit({ hasNoBottom: !selectedUnit.hasNoBottom })}
+                    >
+                      <span className={styles.toggleLabel}>No Bottom Carcass Panel (Sits on Floor / Appliance)</span>
+                      <div
+                        className={`${styles.toggleSwitch} ${
+                          selectedUnit.hasNoBottom ? styles.toggleSwitchActive : ""
+                        }`}
+                      >
+                        <div
+                          className={`${styles.toggleKnob} ${
+                            selectedUnit.hasNoBottom ? styles.toggleKnobActive : ""
+                          }`}
+                        />
+                      </div>
+                    </div>
+
+                    <div
+                      className={styles.toggleRow}
+                      onClick={() => updateSelectedUnit({ hasNoCountertop: !selectedUnit.hasNoCountertop })}
+                    >
+                      <span className={styles.toggleLabel}>Exclude From Countertop (No Worktop Over This)</span>
+                      <div
+                        className={`${styles.toggleSwitch} ${
+                          selectedUnit.hasNoCountertop ? styles.toggleSwitchActive : ""
+                        }`}
+                      >
+                        <div
+                          className={`${styles.toggleKnob} ${
+                            selectedUnit.hasNoCountertop ? styles.toggleKnobActive : ""
+                          }`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Kitchen Countertop (Worktop) & Backsplash Options */}
+                  <div style={{ marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                    <div
+                      className={styles.toggleRow}
+                      onClick={() => updateParam("hasCountertop", !params.hasCountertop)}
+                    >
+                      <span className={styles.toggleLabel}>Add Countertop (Worktop)</span>
+                      <div
+                        className={`${styles.toggleSwitch} ${
+                          params.hasCountertop ? styles.toggleSwitchActive : ""
+                        }`}
+                      >
+                        <div
+                          className={`${styles.toggleKnob} ${
+                            params.hasCountertop ? styles.toggleKnobActive : ""
+                          }`}
+                        />
+                      </div>
+                    </div>
+
+                    {params.hasCountertop && (
+                      <div className={styles.sliderCard} style={{ marginTop: "0.4rem" }}>
+                        <div className={styles.sliderHead}>
+                          <span className={styles.sliderName}>Countertop Height / Thickness</span>
+                          <CadNumberInput
+                            value={params.countertopThickness ?? 30}
+                            onChange={(val) => updateParam("countertopThickness", val)}
+                            min={12}
+                            max={100}
+                            unit="mm"
+                          />
+                        </div>
+                        <input
+                          type="range"
+                          min={12}
+                          max={100}
+                          step={2}
+                          value={params.countertopThickness ?? 30}
+                          onChange={(e) => updateParam("countertopThickness", Number(e.target.value))}
+                          className={styles.rangeSlider}
+                        />
+                      </div>
+                    )}
+
+                    <div
+                      className={styles.toggleRow}
+                      onClick={() => updateParam("hasBacksplash", !params.hasBacksplash)}
+                      style={{ marginTop: "0.5rem" }}
+                    >
+                      <span className={styles.toggleLabel}>Cover Wall Gap (Backsplash Panel)</span>
+                      <div
+                        className={`${styles.toggleSwitch} ${
+                          params.hasBacksplash ? styles.toggleSwitchActive : ""
+                        }`}
+                      >
+                        <div
+                          className={`${styles.toggleKnob} ${
+                            params.hasBacksplash ? styles.toggleKnobActive : ""
+                          }`}
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </>
               ) : (
                 <>
@@ -2262,10 +2264,9 @@ export default function ModelerControls({
                               type="button"
                               onClick={() => {
                                 updateSelectedWardrobeUnit({ doorStyle: st.id as WardrobeUnit["doorStyle"] });
-                                updateParam("doorStyle", st.id as FurnitureParams["doorStyle"]);
                               }}
                               className={`${styles.segmentedBtn} ${
-                                (selectedWardrobeUnit.doorStyle || params.doorStyle || "slab") === st.id
+                                (selectedWardrobeUnit.doorStyle || "slab") === st.id
                                   ? styles.segmentedBtnActive
                                   : ""
                               }`}
@@ -2461,37 +2462,7 @@ export default function ModelerControls({
                       </div>
                     </div>
 
-                    {/* Door / Front Style (Kapak Modeli) */}
-                    {selectedUnit.doorType !== "none" && (
-                      <div className={styles.controlGroup}>
-                        <label className={styles.groupLabel}>Door / Front Style (Kapak Modeli)</label>
-                        <div className={styles.segmentedGrid3}>
-                          {[
-                            { id: "slab", label: "Slab (Flat)" },
-                            { id: "slimShaker", label: "Slim Shaker" },
-                            { id: "shaker", label: "Classic Shaker" },
-                            { id: "fluted", label: "CNC Fluted" },
-                            { id: "framedGlass", label: "Framed Glass" },
-                          ].map((st) => (
-                            <button
-                              key={st.id}
-                              type="button"
-                              onClick={() => {
-                                updateSelectedUnit({ doorStyle: st.id as KitchenCabinetUnit["doorStyle"] });
-                                updateParam("doorStyle", st.id as FurnitureParams["doorStyle"]);
-                              }}
-                              className={`${styles.segmentedBtn} ${
-                                (selectedUnit.doorStyle || params.doorStyle || "slab") === st.id
-                                  ? styles.segmentedBtnActive
-                                  : ""
-                              }`}
-                            >
-                              {st.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+
 
                     {/* 3D Interactive Door Open Slider */}
                     {selectedUnit.doorType !== "none" && (
@@ -3258,10 +3229,36 @@ export default function ModelerControls({
           {openSections.materials && (
             <div className={styles.accordionBody}>
               {params.category === "Cabinet" && (
-                <div style={{ fontSize: "0.72rem", color: "#38bdf8", marginBottom: "0.5rem", fontWeight: 600 }}>
-                  {isMultiSelected
-                    ? `Applying material to ${selectedUnitIds.length} selected cabinets`
-                    : `Applying material to: ${selectedUnit?.name || "Selected Cabinet"}`}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                  <span style={{ fontSize: "0.72rem", color: "#38bdf8", fontWeight: 600 }}>
+                    {isMultiSelected
+                      ? `Cabinet Material (${selectedUnitIds.length} Selected)`
+                      : `Cabinet Material: ${selectedUnit?.name || "Selected Cabinet"}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const mat = (selectedUnit?.materialType || params.materialType || "oak");
+                      updateParam("materialType", mat);
+                      updateParam(
+                        "kitchenUnits",
+                        (params.kitchenUnits || []).map((u) => ({ ...u, materialType: mat }))
+                      );
+                    }}
+                    style={{
+                      background: "rgba(56, 189, 248, 0.12)",
+                      border: "1px solid rgba(56, 189, 248, 0.3)",
+                      borderRadius: "4px",
+                      color: "#38bdf8",
+                      fontSize: "0.68rem",
+                      padding: "2px 6px",
+                      cursor: "pointer",
+                      fontWeight: 600,
+                    }}
+                    title="Apply selected material to all cabinets"
+                  >
+                    Apply to All
+                  </button>
                 </div>
               )}
               <div className={styles.materialGrid}>
@@ -3291,6 +3288,116 @@ export default function ModelerControls({
                   );
                 })}
               </div>
+
+              {/* Door / Front Facade Style (Kapak Modeli) */}
+              {(params.category === "Cabinet" || params.category === "Wardrobe") && (
+                <div className={styles.controlGroup} style={{ marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
+                    <label className={styles.groupLabel} style={{ margin: 0 }}>
+                      Door & Facade Style (Kapak Modeli)
+                    </label>
+                    {params.category === "Cabinet" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const style = selectedUnit?.doorStyle || params.doorStyle || "slab";
+                          updateParam("doorStyle", style);
+                          updateParam(
+                            "kitchenUnits",
+                            (params.kitchenUnits || []).map((u) => ({ ...u, doorStyle: style }))
+                          );
+                        }}
+                        style={{
+                          background: "rgba(56, 189, 248, 0.12)",
+                          border: "1px solid rgba(56, 189, 248, 0.3)",
+                          borderRadius: "4px",
+                          color: "#38bdf8",
+                          fontSize: "0.68rem",
+                          padding: "2px 6px",
+                          cursor: "pointer",
+                          fontWeight: 600,
+                        }}
+                        title="Apply door style to all cabinets"
+                      >
+                        Apply to All
+                      </button>
+                    )}
+                  </div>
+                  <div className={styles.segmentedGrid3}>
+                    {[
+                      { id: "slab", label: "Slab (Flat)" },
+                      { id: "slimShaker", label: "Slim Shaker" },
+                      { id: "shaker", label: "Classic Shaker" },
+                      { id: "fluted", label: "CNC Fluted" },
+                      { id: "framedGlass", label: "Framed Glass" },
+                    ].map((st) => {
+                      const isActive =
+                        params.category === "Cabinet" && selectedUnit
+                          ? (selectedUnit.doorStyle || "slab") === st.id
+                          : params.category === "Wardrobe" && selectedWardrobeUnit
+                          ? (selectedWardrobeUnit.doorStyle || "slab") === st.id
+                          : (params.doorStyle || "slab") === st.id;
+                      return (
+                        <button
+                          key={st.id}
+                          type="button"
+                          onClick={() => {
+                            if (params.category === "Cabinet" && selectedUnit) {
+                              updateSelectedUnit({ doorStyle: st.id as KitchenCabinetUnit["doorStyle"] });
+                            } else if (params.category === "Wardrobe" && selectedWardrobeUnit) {
+                              updateSelectedWardrobeUnit({ doorStyle: st.id as WardrobeUnit["doorStyle"] });
+                            } else {
+                              updateParam("doorStyle", st.id as FurnitureParams["doorStyle"]);
+                            }
+                          }}
+                          className={`${styles.segmentedBtn} ${isActive ? styles.segmentedBtnActive : ""}`}
+                        >
+                          {st.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Hardware Finish (Co-located in Materials & Finishes) */}
+              {params.category !== "Shelf" && (
+                <div className={styles.controlGroup} style={{ marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                  <label className={styles.groupLabel}>Hardware Metal Finish</label>
+                  <div className={styles.segmentedGrid4}>
+                    {[
+                      { id: "black", label: "Matte Black" },
+                      { id: "steel", label: "Brushed Steel" },
+                      { id: "brass", label: "Satin Brass" },
+                      { id: "bronze", label: "Smoked Bronze" },
+                    ].map((f) => {
+                      const isActive =
+                        params.category === "Cabinet" && selectedUnit
+                          ? (selectedUnit.handleFinish || params.handleFinish || "black") === f.id
+                          : params.category === "Wardrobe" && selectedWardrobeUnit
+                          ? (selectedWardrobeUnit.handleFinish || params.handleFinish || "black") === f.id
+                          : (params.handleFinish || "black") === f.id;
+                      return (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => {
+                            if (params.category === "Cabinet" && selectedUnit) {
+                              updateSelectedUnit({ handleFinish: f.id as KitchenCabinetUnit["handleFinish"] });
+                            } else if (params.category === "Wardrobe" && selectedWardrobeUnit) {
+                              updateSelectedWardrobeUnit({ handleFinish: f.id as WardrobeUnit["handleFinish"] });
+                            }
+                            updateParam("handleFinish", f.id as FurnitureParams["handleFinish"]);
+                          }}
+                          className={`${styles.segmentedBtn} ${isActive ? styles.segmentedBtnActive : ""}`}
+                        >
+                          {f.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

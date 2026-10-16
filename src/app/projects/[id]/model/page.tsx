@@ -16,7 +16,7 @@ import ModelerToolbar from "@/components/modeler/ModelerToolbar";
 import CadActionToolbar from "@/components/modeler/CadActionToolbar";
 import TechnicalDrawingWorkspace from "@/components/technical-drawing/TechnicalDrawingWorkspace";
 import { FaChevronLeft } from "react-icons/fa";
-import { Md3dRotation, MdDesignServices } from "react-icons/md";
+import { Md3dRotation, MdDesignServices, MdTune } from "react-icons/md";
 import styles from "@/components/modeler/modeler.module.css";
 
 const ModelerCanvas = dynamic(
@@ -142,6 +142,9 @@ export default function ModelerPage({ params }: PageProps) {
     internalColumns: 1,
     internalShelves: 2,
     hasBackPanel: true,
+    hasCountertop: false,
+    countertopThickness: 30,
+    hasBacksplash: false,
     kitchenUnits: DEFAULT_KITCHEN_UNITS,
     selectedUnitId: "base-1",
     selectedUnitIds: ["base-1"],
@@ -153,6 +156,7 @@ export default function ModelerPage({ params }: PageProps) {
   const [isParallel, setIsParallel] = useState<boolean>(false);
   const [workspaceMode, setWorkspaceMode] = useState<"3d" | "2d">("3d");
   const [inspectorTab, setInspectorTab] = useState<"3d" | "2d">("3d");
+  const [isMobileControlsOpen, setIsMobileControlsOpen] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
 
@@ -677,8 +681,15 @@ export default function ModelerPage({ params }: PageProps) {
           </div>
         </div>
 
-        {workspaceMode === "3d" ? (
-          <>
+        <div
+          aria-hidden={workspaceMode !== "3d"}
+          style={{
+            position: "absolute",
+            inset: 0,
+            visibility: workspaceMode === "3d" ? "visible" : "hidden",
+            pointerEvents: workspaceMode === "3d" ? "auto" : "none",
+          }}
+        >
             <CadActionToolbar
               params={{
                 ...furnitureParams,
@@ -734,17 +745,48 @@ export default function ModelerPage({ params }: PageProps) {
               onSelectDivision={handleSelectDivision}
               onRemoveDivision={handleRemoveDivision}
             />
-          </>
-        ) : (
+        </div>
+        <div
+          aria-hidden={workspaceMode !== "2d"}
+          style={{
+            position: "absolute",
+            inset: 0,
+            visibility: workspaceMode === "2d" ? "visible" : "hidden",
+            pointerEvents: workspaceMode === "2d" ? "auto" : "none",
+          }}
+        >
           <TechnicalDrawingWorkspace
             params={furnitureParams}
             setParams={setFurnitureParams}
             projectName={project?.name || "Parametric Furniture Project"}
             clientName="Cadance Studio"
-            onOpenSettings={() => setInspectorTab("2d")}
+            onOpenSettings={() => {
+              setInspectorTab("2d");
+              setIsMobileControlsOpen(true);
+            }}
           />
-        )}
+        </div>
+
+        {/* Floating Mobile Trigger for Parameters & Inspector */}
+        <button
+          type="button"
+          className={styles.mobileInspectorToggleBtn}
+          onClick={() => setIsMobileControlsOpen(true)}
+          aria-label="Open Inspector Controls"
+        >
+          {workspaceMode === "3d" ? <MdTune size={16} /> : <MdDesignServices size={16} />}
+          <span>{workspaceMode === "3d" ? "CAD Inspector" : "Sheet Settings"}</span>
+        </button>
       </div>
+
+      {/* Mobile Drawer Backdrop */}
+      <div
+        className={`${styles.sidebarBackdrop} ${
+          isMobileControlsOpen ? styles.sidebarBackdropActive : ""
+        }`}
+        onClick={() => setIsMobileControlsOpen(false)}
+        aria-hidden="true"
+      />
 
       <ModelerControls
         params={{
@@ -759,6 +801,8 @@ export default function ModelerPage({ params }: PageProps) {
         saveSuccess={saveSuccess}
         inspectorTab={inspectorTab}
         setInspectorTab={setInspectorTab}
+        isMobileOpen={isMobileControlsOpen}
+        onCloseMobile={() => setIsMobileControlsOpen(false)}
       />
     </div>
   );

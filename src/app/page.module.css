@@ -118,3 +118,34 @@
   transform: translateY(-1px);
   box-shadow: 0 0 20px rgba(41, 114, 245, 0.45);
 }
+
+@media (max-width: 640px) {
+  .main {
+    padding: 5rem 1rem 2.5rem;
+  }
+
+  .statusCard {
+    padding: 1.75rem 1.25rem;
+    gap: 1.1rem;
+  }
+
+  .cardTitle {
+    font-size: 1.35rem;
+  }
+
+  .specsList {
+    padding: 1rem;
+    font-size: 0.78rem;
+  }
+
+  .actionRow {
+    flex-direction: column;
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .primaryBtn {
+    width: 100%;
+    justify-content: center;
+  }
+}
