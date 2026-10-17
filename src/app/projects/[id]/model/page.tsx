@@ -113,6 +113,10 @@ export default function ModelerPage({ params }: PageProps) {
   const [project, setProject] = useState<ProjectItem | null>(null);
 
   const groupRef = useRef<THREE.Group | null>(null);
+  const [modelReadyVersion, setModelReadyVersion] = useState(0);
+  const handleModelReady = useCallback(() => {
+    setModelReadyVersion((version) => version + 1);
+  }, []);
 
   const [furnitureParams, setFurnitureParams] = useState<FurnitureParams>({
     name: "Minimalist Dining Table",
@@ -686,8 +690,10 @@ export default function ModelerPage({ params }: PageProps) {
           style={{
             position: "absolute",
             inset: 0,
-            visibility: workspaceMode === "3d" ? "visible" : "hidden",
+            opacity: workspaceMode === "3d" ? 1 : 0,
             pointerEvents: workspaceMode === "3d" ? "auto" : "none",
+            zIndex: workspaceMode === "3d" ? 2 : 1,
+            isolation: "isolate",
           }}
         >
             <CadActionToolbar
@@ -733,6 +739,7 @@ export default function ModelerPage({ params }: PageProps) {
                 onRemoveDivision: handleRemoveDivision,
               }}
               groupRef={groupRef}
+              onModelReady={handleModelReady}
               showGrid={showGrid}
               isParallel={isParallel}
               setIsParallel={setIsParallel}
@@ -751,12 +758,17 @@ export default function ModelerPage({ params }: PageProps) {
           style={{
             position: "absolute",
             inset: 0,
-            visibility: workspaceMode === "2d" ? "visible" : "hidden",
+            opacity: workspaceMode === "2d" ? 1 : 0,
             pointerEvents: workspaceMode === "2d" ? "auto" : "none",
+            zIndex: workspaceMode === "2d" ? 2 : 1,
+            isolation: "isolate",
           }}
         >
           <TechnicalDrawingWorkspace
             params={furnitureParams}
+            modelGroupRef={groupRef}
+            modelReadyVersion={modelReadyVersion}
+            projectionEnabled={workspaceMode === "2d"}
             setParams={setFurnitureParams}
             projectName={project?.name || "Parametric Furniture Project"}
             clientName="Cadance Studio"

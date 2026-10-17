@@ -143,7 +143,7 @@ export function exportToDxf(
   };
 
   // 1. FRONT ELEVATION
-  addText("FRONT ELEVATION (DOORS HIDDEN)", frontOriginX, frontOriginY + front.height + 40, 30, "0_TEXT");
+  addText("FRONT ELEVATION", frontOriginX, frontOriginY + front.height + 40, 30, "0_TEXT");
   front.rects.forEach(r => {
     const layer = r.type === "outline" ? "0_OUTLINE" : r.type === "hidden" ? "0_HIDDEN" : "0_INTERIOR";
     addRect(frontOriginX + r.x, frontOriginY + r.y, r.width, r.height, layer);
@@ -156,7 +156,7 @@ export function exportToDxf(
   // 2. PLAN / TOP VIEW (placed directly above front elevation)
   const topOriginX = frontOriginX;
   const topOriginY = frontOriginY + front.height + gap;
-  addText("PLAN / TOP VIEW (DOORS HIDDEN)", topOriginX, topOriginY + top.height + 40, 30, "0_TEXT");
+  addText("PLAN / TOP VIEW", topOriginX, topOriginY + top.height + 40, 30, "0_TEXT");
   top.rects.forEach(r => {
     const layer = r.type === "outline" ? "0_OUTLINE" : r.type === "hidden" ? "0_HIDDEN" : "0_INTERIOR";
     addRect(topOriginX + r.x, topOriginY + r.y, r.width, r.height, layer);
@@ -182,7 +182,7 @@ export function exportToDxf(
   // 4. ISOMETRIC VIEW (placed to the right of top view, doors visible!)
   const isoOriginX = sideOriginX;
   const isoOriginY = topOriginY;
-  addText("ISOMETRIC PROJECTION (DOORS VISIBLE)", isoOriginX, isoOriginY + iso.height + 40, 30, "0_TEXT");
+  addText("ISOMETRIC PROJECTION", isoOriginX, isoOriginY + iso.height + 40, 30, "0_TEXT");
   iso.lines.forEach(l => {
     addLine(isoOriginX + l.x1, isoOriginY + l.y1, isoOriginX + l.x2, isoOriginY + l.y2, getLineLayer(l.type));
   });

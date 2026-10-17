@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useRef, useEffect } from "react";
+import React, { Suspense, useRef, useEffect, useMemo } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import {
   OrbitControls,
@@ -13,12 +13,13 @@ import {
 } from "@react-three/drei";
 import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
-import FurnitureMesh, { FurnitureParams } from "./FurnitureMesh";
+import FurnitureMesh, { FurnitureParams, getFurnitureAssemblyDimensions } from "./FurnitureMesh";
 import CadanceViewCube from "./CadanceViewCube";
 
 interface ModelerCanvasProps {
   params: FurnitureParams;
   groupRef: React.RefObject<THREE.Group | null>;
+  onModelReady?: () => void;
   showGrid: boolean;
   isParallel: boolean;
   setIsParallel: (val: boolean) => void;
@@ -223,6 +224,7 @@ function CameraSyncController({
 export default function ModelerCanvas({
   params,
   groupRef,
+  onModelReady,
   showGrid,
   isParallel,
   setIsParallel,
@@ -241,6 +243,7 @@ export default function ModelerCanvas({
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const isBoxSelectTool = params.activeTool === "box-select";
+  const assemblyDimensions = useMemo(() => getFurnitureAssemblyDimensions(params), [params]);
   const marqueeOverlayRef = useRef<HTMLDivElement | null>(null);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const isSelectingRef = useRef(false);
@@ -401,6 +404,7 @@ export default function ModelerCanvas({
             <FurnitureMesh
               params={params}
               groupRef={groupRef}
+              onModelReady={onModelReady}
               onSelectUnit={onSelectUnit}
               onSelectUnits={onSelectUnits}
               onAddAdjacentUnit={onAddAdjacentUnit}
@@ -422,7 +426,7 @@ export default function ModelerCanvas({
               cellColor="#262a35"
               sectionSize={1.0}
               sectionThickness={1.2}
-              sectionColor="#bd3737ff"
+              sectionColor="#475569"
               fadeDistance={8}
               fadeStrength={1.2}
             />
@@ -467,6 +471,44 @@ export default function ModelerCanvas({
           </GizmoHelper>
         </Suspense>
       </Canvas>
+
+      {params.showDimensions && (
+        <div
+          aria-label="Furniture dimensions"
+          style={{
+            position: "absolute",
+            top: 12,
+            right: 12,
+            zIndex: 20,
+            display: "flex",
+            gap: 6,
+            pointerEvents: "none",
+          }}
+        >
+          {[
+            ["W", assemblyDimensions.width],
+            ["H", assemblyDimensions.height],
+            ["D", assemblyDimensions.depth],
+          ].map(([label, value]) => (
+            <span
+              key={label}
+              style={{
+                padding: "4px 7px",
+                borderRadius: 5,
+                border: "1px solid rgba(59, 130, 246, 0.55)",
+                background: "rgba(13, 17, 23, 0.92)",
+                color: "#bfdbfe",
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                fontSize: 10,
+                fontWeight: 700,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {label}: {Math.round(Number(value))} mm
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* 2D Marquee Selection Overlay Box (GPU accelerated, DOM-ref updated) */}
       <div

@@ -1,5 +1,10 @@
 import { FurnitureParams, KitchenCabinetUnit, WardrobeUnit } from "../modeler/FurnitureMesh";
 
+export function getDefaultFabricationNotes(boardThickness = 18, unit: "mm" | "cm" = "mm"): string {
+  const thickness = Number.isFinite(boardThickness) ? Math.round(boardThickness) : 18;
+  return `${thickness}mm MDF-Lam / melamine-faced board. ABS edge-band exposed edges per panel specification. All dimensions in ${unit}; verify site measurements before manufacture.`;
+}
+
 export interface DrawingLine {
   id: string;
   x1: number;
@@ -3379,9 +3384,9 @@ export function generateIsometricView(
   return {
     width: Math.max(10, maxU - minU),
     height: Math.max(10, maxV - minV),
-    rects,
-    lines,
-    circles,
+    rects: rects.filter((rect) => rect.type !== "hidden"),
+    lines: lines.filter((line) => line.type !== "hidden"),
+    circles: circles.filter((circle) => circle.type !== "hidden"),
     dimensions,
   };
 }

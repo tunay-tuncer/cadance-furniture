@@ -1,16 +1,20 @@
 "use client";
 
 import React, { useState, useRef, useMemo, useEffect, useCallback } from "react";
+import * as THREE from "three";
 import { FurnitureParams, TechnicalDrawingSettings } from "../modeler/FurnitureMesh";
 import {
   generateFrontElevation,
   generatePlanTopView,
   generateSideSectionView,
   generateIsometricView,
+  getDefaultFabricationNotes,
   ViewGeometry,
 } from "./technicalDrawingUtils";
 import { exportToPdf } from "./pdfGenerator";
 import { exportToDxf, downloadDxfFile } from "./dxfGenerator";
+import { projectFurnitureMeshes } from "./meshProjection";
+import type { ProjectedDrawingViews } from "./meshProjection";
 import {
   MdPictureAsPdf,
   MdStraighten,
@@ -62,6 +66,9 @@ export interface ViewMetrics {
 
 interface TechnicalDrawingWorkspaceProps {
   params: FurnitureParams;
+  modelGroupRef?: React.RefObject<THREE.Group | null>;
+  modelReadyVersion?: number;
+  projectionEnabled?: boolean;
   setParams?: React.Dispatch<React.SetStateAction<FurnitureParams>>;
   projectName?: string;
   clientName?: string;
@@ -70,6 +77,9 @@ interface TechnicalDrawingWorkspaceProps {
 
 export default function TechnicalDrawingWorkspace({
   params,
+  modelGroupRef,
+  modelReadyVersion = 0,
+  projectionEnabled = true,
   setParams,
   projectName = "Parametric Furniture Design",
   clientName = "Cadance Studio",
@@ -92,13 +102,13 @@ export default function TechnicalDrawingWorkspace({
   const designer = drawingSettings.designer || "Studio Engineer";
   const revision = drawingSettings.revision || "Rev 01";
   const status = drawingSettings.status || "FOR FABRICATION";
-  const notes = drawingSettings.notes || `18mm MFC Carcass. All dimensions in ${unit}. Verify all site measurements prior to joinery fabrication.`;
+  const notes = drawingSettings.notes || getDefaultFabricationNotes(params.boardThickness, unit);
 
   // Custom or standard View Titles (User Editable)
   const viewTitles = useMemo(() => ({
     top: drawingSettings.viewTitles?.top || "Plan (Top View)",
-    front: drawingSettings.viewTitles?.front || "Front Elevation (Interior Joinery & Shelves)",
-    side: drawingSettings.viewTitles?.side || "Side / Cross-Section",
+    front: drawingSettings.viewTitles?.front || "Front Elevation",
+    side: drawingSettings.viewTitles?.side || "Side Elevation",
     iso: drawingSettings.viewTitles?.iso || `3D Isometric Projection (${isoAngle}°)`,
   }), [drawingSettings.viewTitles, isoAngle]);
 
@@ -118,6 +128,10 @@ export default function TechnicalDrawingWorkspace({
         : { width: 650, height: 920 };
     }
   }, [pageSize, orientation]);
+  const physicalPaperWidth = orientation === "landscape"
+    ? (pageSize === "A3" ? 420 : 297)
+    : (pageSize === "A3" ? 297 : 210);
+  const paperPixelsPerMm = paperDimensions.width / physicalPaperWidth;
 
   // Canvas viewport container reference
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -156,8 +170,9 @@ export default function TechnicalDrawingWorkspace({
     if (rect.width <= 0 || rect.height <= 0) return;
 
     const margin = 48; // Padding around paper sheet
+    const toolbarClearance = 80;
     const availW = Math.max(100, rect.width - margin * 2);
-    const availH = Math.max(100, rect.height - margin * 2);
+    const availH = Math.max(100, rect.height - margin * 2 - toolbarClearance);
 
     const scaleX = availW / paperDimensions.width;
     const scaleY = availH / paperDimensions.height;
@@ -165,7 +180,7 @@ export default function TechnicalDrawingWorkspace({
     const roundedZoom = Math.max(0.25, Number(fitZoom.toFixed(2)));
 
     const centeredX = (rect.width - paperDimensions.width * roundedZoom) / 2;
-    const centeredY = (rect.height - paperDimensions.height * roundedZoom) / 2;
+    const centeredY = toolbarClearance + (rect.height - toolbarClearance - paperDimensions.height * roundedZoom) / 2;
 
     setSheetZoom(roundedZoom);
     setPan({ x: Math.round(centeredX), y: Math.round(centeredY) });
@@ -257,30 +272,162 @@ export default function TechnicalDrawingWorkspace({
   };
 
   // Generate 2D Vector Geometry from parametric math (scaled to selected unit mm/cm)
-  const frontView = useMemo(() => generateFrontElevation(params, unit), [params, unit]);
-  const topView = useMemo(() => generatePlanTopView(params, unit), [params, unit]);
-  const sideView = useMemo(() => generateSideSectionView(params, unit), [params, unit]);
+  const parametricFrontView = useMemo(() => generateFrontElevation(params, unit), [params, unit]);
+  const parametricTopView = useMemo(() => generatePlanTopView(params, unit), [params, unit]);
+  const parametricSideView = useMemo(() => generateSideSectionView(params, unit), [params, unit]);
   // Configurable 3D Isometric View (responds dynamically to isoAngle, isoElevation & unit)
-  const isoView = useMemo(
+  const parametricIsoView = useMemo(
     () => generateIsometricView(params, isoAngle, isoElevation, unit),
     [params, isoAngle, isoElevation, unit]
   );
 
+  const [projectedViews, setProjectedViews] = useState<ProjectedDrawingViews | null>(null);
+  useEffect(() => {
+    setProjectedViews(null);
+    if (!projectionEnabled) return;
 
-  // Viewport Scale factor for screen SVG rendering (computed early for geometry metrics)
+    let frame = 0;
+    let attempts = 0;
+    let cancelled = false;
+
+    const updateProjection = () => {
+      if (cancelled) return;
+      const result = projectFurnitureMeshes(modelGroupRef?.current ?? null, isoAngle, isoElevation, unit);
+      if (result) {
+        setProjectedViews(result);
+        return;
+      }
+      if (attempts++ < 60) frame = window.requestAnimationFrame(updateProjection);
+      else setProjectedViews(null);
+    };
+
+    // Wait for the dynamically loaded 3D canvas and its scene to commit.
+    frame = window.requestAnimationFrame(updateProjection);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+    };
+  }, [modelGroupRef, modelReadyVersion, params, isoAngle, isoElevation, unit, projectionEnabled]);
+
+  const frontView = useMemo(() => projectedViews
+    ? projectedViews.front
+    : parametricFrontView, [projectedViews, parametricFrontView]);
+  const topView = useMemo(() => projectedViews
+    ? projectedViews.top
+    : parametricTopView, [projectedViews, parametricTopView]);
+  const sideView = useMemo(() => projectedViews
+    ? projectedViews.side
+    : parametricSideView, [projectedViews, parametricSideView]);
+  const isoView = useMemo(() => {
+    const visibleEdgesOnly = (view: ViewGeometry): ViewGeometry => ({
+      ...view,
+      rects: view.rects.filter((item) => item.type !== "hidden"),
+      lines: view.lines.filter((item) => item.type !== "hidden"),
+      circles: view.circles.filter((item) => item.type !== "hidden"),
+    });
+    if (projectedViews) return visibleEdgesOnly(projectedViews.iso);
+    if (!projectionEnabled) return visibleEdgesOnly(parametricIsoView);
+    // The parameter-based isometric fallback cannot occlude geometry reliably.
+    // Keep the viewport footprint stable while waiting for the live model projection.
+    return { ...visibleEdgesOnly(parametricIsoView), rects: [], lines: [], circles: [], dimensions: [] };
+  }, [projectedViews, parametricIsoView, projectionEnabled]);
+
+  const measuredDimensions = projectedViews
+    ? {
+        width: projectedViews.front.width,
+        height: projectedViews.front.height,
+        depth: projectedViews.top.height,
+      }
+    : { width: params.width, height: params.height, depth: params.depth };
+
+
+  // Viewport Scale factor for screen SVG rendering (pixels per model millimetre).
+  // The sheet itself is rendered at roughly 3 px/mm, so convert standard print
+  // scales through that density instead of treating 1:10 as 0.1 screen px/mm.
   const viewScale = useMemo(() => {
-    if (scaleMode === "1:10") return 0.1;
-    if (scaleMode === "1:15") return 1 / 15;
-    if (scaleMode === "1:20") return 0.05;
-    if (scaleMode === "1:25") return 0.04;
-    if (scaleMode === "1:50") return 0.02;
+    const standardDenominator = scaleMode.match(/^1:(10|15|20|25|50)$/)?.[1];
+    if (standardDenominator) return paperPixelsPerMm / Number(standardDenominator);
     if (scaleMode === "custom") return customScale;
 
-    // Auto-fit calculation
-    const maxDim = Math.max(frontView.width, frontView.height, topView.height, isoView.width, 1200);
-    const targetW = pageSize === "A3" ? 420 : 320;
-    return targetW / maxDim;
-  }, [frontView, topView, isoView, pageSize, scaleMode, customScale]);
+    const width = paperDimensions.width;
+    const height = paperDimensions.height;
+    const leftModelX = 84;
+    let maxScaleByWidth: number;
+    let maxScaleByHeight: number;
+
+    if (orientation === "landscape") {
+      const rightColumnX = width / 2 + 20;
+      const rightModelX = rightColumnX + 44;
+      const leftColumnLimit = rightColumnX - 8;
+      const rightColumnLimit = width - 16;
+      const leftExtent = Math.max(topView.width + 45, frontView.width + 45, 1);
+      const rightExtent = Math.max(isoView.width, sideView.width + 45, 1);
+      maxScaleByWidth = Math.min(
+        (leftColumnLimit - leftModelX) / leftExtent,
+        (rightColumnLimit - rightModelX) / rightExtent,
+      );
+
+      const topHeaderY = 35;
+      const lowerHeaderY = height / 2 - 20;
+      const topModelY = topHeaderY + 56;
+      const lowerModelY = lowerHeaderY + 56;
+      const topExtent = Math.max(topView.height + 45, isoView.height, 1);
+      const lowerExtent = Math.max(frontView.height + 45, sideView.height + 45, 1);
+      const topSpace = lowerHeaderY - 8 - topModelY;
+      const lowerSpace = Math.min(
+        height - 16 - 20 - lowerModelY,
+        height - 16 - 136 - 8 - lowerModelY,
+      );
+      maxScaleByHeight = Math.min(topSpace / topExtent, lowerSpace / lowerExtent);
+    } else {
+      const isoHeaderY = height * 0.28;
+      const lowerHeaderY = height * 0.52;
+      const topModelY = 40 + 56;
+      const isoModelY = isoHeaderY + 56;
+      const lowerModelY = lowerHeaderY + 56;
+      const topSpace = isoHeaderY - 8 - topModelY;
+      const isoSpace = lowerHeaderY - 8 - isoModelY;
+      const lowerSpace = Math.min(
+        height - 16 - 20 - lowerModelY,
+        height - 16 - 136 - 8 - lowerModelY,
+      );
+      const leftBottomLimit = width * 0.52 - 8;
+      const rightModelX = width * 0.52 + 44;
+      const rightColumnLimit = width - 16;
+      maxScaleByWidth = Math.min(
+        (leftBottomLimit - leftModelX) / Math.max(frontView.width + 45, 1),
+        (rightColumnLimit - rightModelX) / Math.max(sideView.width + 45, 1),
+      );
+      maxScaleByHeight = Math.min(
+        topSpace / Math.max(topView.height + 45, 1),
+        isoSpace / Math.max(isoView.height, 1),
+        lowerSpace / Math.max(frontView.height + 45, sideView.height + 45, 1),
+      );
+    }
+
+    const maxModelDimension = Math.max(
+      frontView.width, frontView.height,
+      topView.width, topView.height,
+      sideView.width, sideView.height,
+      isoView.width, isoView.height,
+      1200,
+    );
+    const preferredScale = (pageSize === "A3" ? 420 : 320) / maxModelDimension;
+    const fittingScale = Math.max(0.001, Math.min(preferredScale, maxScaleByWidth, maxScaleByHeight));
+    const requiredDenominator = paperPixelsPerMm / fittingScale;
+    const architecturalScales = [5, 10, 15, 20, 25, 50, 100, 200];
+    const denominator = architecturalScales.find((scale) => scale >= requiredDenominator)
+      ?? Math.ceil(requiredDenominator);
+    return paperPixelsPerMm / denominator;
+  }, [
+    frontView, topView, sideView, isoView,
+    pageSize, orientation, paperDimensions, paperPixelsPerMm,
+    scaleMode, customScale,
+  ]);
+
+  const scaleDenominator = paperPixelsPerMm / viewScale;
+  const roundedScaleDenominator = Number(scaleDenominator.toFixed(1));
+  const scaleLabel = `1:${Number.isInteger(roundedScaleDenominator) ? roundedScaleDenominator : roundedScaleDenominator.toFixed(1)}`;
 
   // Lookup dictionary for geometry data
   const viewGeometries = useMemo<Record<ViewKey, ViewGeometry>>(() => ({
@@ -807,7 +954,7 @@ export default function TechnicalDrawingWorkspace({
       revision,
       status,
       notes,
-      scaleText: `1:${Math.round(1 / viewScale)}`,
+      scaleText: scaleLabel,
       unit,
       viewScale,
       screenDimensions: paperDimensions,
@@ -940,6 +1087,8 @@ export default function TechnicalDrawingWorkspace({
               let angleDeg = (angleRad * 180) / Math.PI;
               if (angleDeg > 90) angleDeg -= 180;
               if (angleDeg < -90) angleDeg += 180;
+              // Keep SVG attributes identical between server and browser math.
+              angleDeg = Math.round(angleDeg * 1e6) / 1e6;
 
               // Dynamically sized text mask to prevent overlapping lines
               const textWidth = Math.max(28, d.text.length * 6.5 + 8);
@@ -1176,7 +1325,7 @@ export default function TechnicalDrawingWorkspace({
           <div className={styles.gridMarkV} style={{ top: "50%", left: "4px" }}>2</div>
           <div className={styles.gridMarkV} style={{ top: "75%", left: "4px" }}>3</div>
 
-          {/* VIEWPORT 1: TOP PLAN VIEW (Doors Hidden) */}
+          {/* VIEWPORT 1: TOP PLAN VIEW (Projected from the rendered model) */}
           <div
             className={`${styles.viewportContainer} ${draggingView === "top" ? styles.viewportDragging : ""}`}
             style={{
@@ -1211,7 +1360,7 @@ export default function TechnicalDrawingWorkspace({
                   <MdEditNote size={12} className={styles.viewportTitleEditIcon} />
                 </div>
               )}
-              <span className={styles.viewportBadge}>1:{Math.round(1 / viewScale)}</span>
+              <span className={styles.viewportBadge}>{scaleLabel}</span>
             </div>
             {renderSvgGeometry(topView, "Top")}
           </div>
@@ -1251,12 +1400,12 @@ export default function TechnicalDrawingWorkspace({
                   <MdEditNote size={12} className={styles.viewportTitleEditIcon} />
                 </div>
               )}
-              <span className={styles.viewportBadge}>DOORS VISIBLE</span>
+              <span className={styles.viewportBadge}>VISIBLE EDGES ONLY</span>
             </div>
             {renderSvgGeometry(isoView, "Isometric")}
           </div>
 
-          {/* VIEWPORT 3: FRONT ELEVATION (Doors Hidden) */}
+          {/* VIEWPORT 3: FRONT ELEVATION (Projected from the rendered model) */}
           <div
             className={`${styles.viewportContainer} ${draggingView === "front" ? styles.viewportDragging : ""}`}
             style={{
@@ -1291,12 +1440,12 @@ export default function TechnicalDrawingWorkspace({
                   <MdEditNote size={12} className={styles.viewportTitleEditIcon} />
                 </div>
               )}
-              <span className={styles.viewportBadge}>1:{Math.round(1 / viewScale)}</span>
+              <span className={styles.viewportBadge}>{scaleLabel}</span>
             </div>
             {renderSvgGeometry(frontView, "Front")}
           </div>
 
-          {/* VIEWPORT 4: SIDE / CROSS-SECTION (Doors Hidden) */}
+          {/* VIEWPORT 4: SIDE ELEVATION (Projected from the rendered model) */}
           <div
             className={`${styles.viewportContainer} ${draggingView === "side" ? styles.viewportDragging : ""}`}
             style={{
@@ -1331,7 +1480,7 @@ export default function TechnicalDrawingWorkspace({
                   <MdEditNote size={12} className={styles.viewportTitleEditIcon} />
                 </div>
               )}
-              <span className={styles.viewportBadge}>1:{Math.round(1 / viewScale)}</span>
+              <span className={styles.viewportBadge}>{scaleLabel}</span>
             </div>
             {renderSvgGeometry(sideView, "Side")}
           </div>
@@ -1365,8 +1514,8 @@ export default function TechnicalDrawingWorkspace({
                 <span className={styles.titleCellLabel}>Dimensions (WxHxD)</span>
                 <span className={styles.titleCellValue}>
                   {unit === "cm"
-                    ? `${(params.width / 10).toFixed(0)}x${(params.height / 10).toFixed(0)}x${(params.depth / 10).toFixed(0)} cm`
-                    : `${Math.round(params.width)}x${Math.round(params.height)}x${Math.round(params.depth)} mm`}
+                    ? `${(measuredDimensions.width / 10).toFixed(0)}x${(measuredDimensions.height / 10).toFixed(0)}x${(measuredDimensions.depth / 10).toFixed(0)} cm`
+                    : `${Math.round(measuredDimensions.width)}x${Math.round(measuredDimensions.height)}x${Math.round(measuredDimensions.depth)} mm`}
                 </span>
               </div>
               <div className={styles.titleCell}>
@@ -1378,7 +1527,7 @@ export default function TechnicalDrawingWorkspace({
               <div className={styles.titleCell}>
                 <span className={styles.titleCellLabel}>Sheet & Scale</span>
                 <span className={styles.titleCellValue}>
-                  {pageSize}-{orientation[0].toUpperCase()} | 1:{Math.round(1 / viewScale)} | {unit.toUpperCase()}
+                  {pageSize}-{orientation[0].toUpperCase()} | {scaleLabel} | {unit.toUpperCase()}
                 </span>
               </div>
             </div>

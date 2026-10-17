@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { FurnitureParams, KitchenCabinetUnit, WardrobeUnit } from "./FurnitureMesh";
 import CadNumberInput from "./CadNumberInput";
 import { calculateProductionMetrics } from "@/lib/production/productionCalculator";
+import { getDefaultFabricationNotes } from "../technical-drawing/technicalDrawingUtils";
 import {
   MdSave,
   MdDownload,
@@ -1735,17 +1736,27 @@ export default function ModelerControls({
                   <div style={{ marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                     <div
                       className={styles.toggleRow}
-                      onClick={() => updateSelectedUnit({ hasNoBottom: !selectedUnit.hasNoBottom })}
+                      title={selectedUnit.type === "fridge" || selectedUnit.type === "dishwasher"
+                        ? "Appliance cabinets always omit the bottom panel and toe kick."
+                        : undefined}
+                      onClick={() => {
+                        if (selectedUnit.type === "fridge" || selectedUnit.type === "dishwasher") return;
+                        updateSelectedUnit({ hasNoBottom: !selectedUnit.hasNoBottom });
+                      }}
                     >
-                      <span className={styles.toggleLabel}>No Bottom Carcass Panel (Sits on Floor / Appliance)</span>
+                      <span className={styles.toggleLabel}>No Bottom Panel or Toe Kick (Sits on Floor / Appliance)</span>
                       <div
                         className={`${styles.toggleSwitch} ${
-                          selectedUnit.hasNoBottom ? styles.toggleSwitchActive : ""
+                          (selectedUnit.hasNoBottom || selectedUnit.type === "fridge" || selectedUnit.type === "dishwasher")
+                            ? styles.toggleSwitchActive
+                            : ""
                         }`}
                       >
                         <div
                           className={`${styles.toggleKnob} ${
-                            selectedUnit.hasNoBottom ? styles.toggleKnobActive : ""
+                            (selectedUnit.hasNoBottom || selectedUnit.type === "fridge" || selectedUnit.type === "dishwasher")
+                              ? styles.toggleKnobActive
+                              : ""
                           }`}
                         />
                       </div>
@@ -3597,7 +3608,7 @@ export default function ModelerControls({
                   className={styles.drawingTextArea}
                   value={
                     params.drawingSettings?.notes ??
-                    "18mm MFC Carcass with 2mm ABS edge banding. All dimensions in mm. Verify all site measurements prior to joinery fabrication."
+                    getDefaultFabricationNotes(params.boardThickness, params.drawingSettings?.unit ?? "mm")
                   }
                   onChange={(e) => updateDrawingParam("notes", e.target.value)}
                   placeholder="Enter custom joinery notes, hardware specs, or legend remarks..."
@@ -3910,7 +3921,7 @@ export default function ModelerControls({
                 <input
                   type="text"
                   className={styles.drawingTextInput}
-                  value={params.drawingSettings?.viewTitles?.front ?? "Front Elevation (Interior Joinery & Shelves)"}
+                  value={params.drawingSettings?.viewTitles?.front ?? "Front Elevation"}
                   onChange={(e) =>
                     updateDrawingParam("viewTitles", {
                       ...(params.drawingSettings?.viewTitles || {}),
@@ -3922,18 +3933,18 @@ export default function ModelerControls({
               </div>
 
               <div className={styles.drawingInputRow}>
-                <label className={styles.drawingInputLabel}>Side / Cross-Section Title</label>
+                <label className={styles.drawingInputLabel}>Side Elevation Title</label>
                 <input
                   type="text"
                   className={styles.drawingTextInput}
-                  value={params.drawingSettings?.viewTitles?.side ?? "Side / Cross-Section"}
+                  value={params.drawingSettings?.viewTitles?.side ?? "Side Elevation"}
                   onChange={(e) =>
                     updateDrawingParam("viewTitles", {
                       ...(params.drawingSettings?.viewTitles || {}),
                       side: e.target.value,
                     })
                   }
-                  placeholder="e.g. Side / Cross-Section"
+                  placeholder="e.g. Side Elevation"
                 />
               </div>
 

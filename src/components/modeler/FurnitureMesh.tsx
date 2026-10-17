@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useMemo, useState, useCallback, useEffect } from "react";
 import * as THREE from "three";
 import { Edges, Html } from "@react-three/drei";
 
@@ -23,7 +23,7 @@ export interface KitchenCabinetUnit {
   doorOpenPercent?: number; // individual door open state (0-100%)
   doorStyle?: "slab" | "slimShaker" | "shaker" | "fluted" | "framedGlass";
   hasBackPanel?: boolean;
-  hasNoBottom?: boolean; // omit bottom carcass panel (fridge / dishwasher)
+  hasNoBottom?: boolean; // omit the bottom carcass panel (e.g. floor-standing appliances)
   hasNoCountertop?: boolean; // omit countertop on this unit (tall cabinet / fridge)
   width: number;  // mm (e.g. 600 or 900 for corner)
   height: number; // mm (e.g. 720 for base, 2000 for fridge, 2100 for tall)
@@ -180,9 +180,70 @@ export interface FurnitureParams {
   onAddDivision?: (unitId: string, type: "vertical" | "horizontal") => void;
 }
 
+export function getFurnitureAssemblyDimensions(params: FurnitureParams) {
+  let width = params.width || 1400;
+  let height = params.height || 750;
+  let depth = params.depth || 800;
+
+  if (params.category === "Cabinet") {
+    const units: KitchenCabinetUnit[] = params.kitchenUnits && params.kitchenUnits.length > 0
+      ? params.kitchenUnits
+      : [
+          { id: "base-1", name: "Base Cabinet 1", type: "base", width: 600, height: 720, depth: 600, doorType: "singleLeft", drawerCount: 0, internalShelves: 2, handleType: "bar", handleFinish: "black" },
+          { id: "base-2", name: "Base Cabinet 2", type: "base", width: 800, height: 720, depth: 600, doorType: "double", drawerCount: 0, internalShelves: 2, handleType: "bar", handleFinish: "black" },
+          { id: "wall-1", name: "Upper Wall Cabinet 1", type: "wall", width: 600, height: 720, depth: 350, doorType: "singleLeft", drawerCount: 0, internalShelves: 2, handleType: "bar", handleFinish: "black", bottomOffset: 600 },
+          { id: "wall-2", name: "Upper Wall Cabinet 2", type: "wall", width: 800, height: 720, depth: 350, doorType: "double", drawerCount: 0, internalShelves: 2, handleType: "bar", handleFinish: "black", bottomOffset: 600 },
+        ];
+    const baseUnits = units.filter((unit) => unit.type !== "wall" && unit.type !== "corner-wall");
+    const wallUnits = units.filter((unit) => unit.type === "wall" || unit.type === "corner-wall");
+    const plinthHeight = params.baseType === "floating" ? 0 : (params.plinthHeight ?? 80);
+    const cornerIndex = baseUnits.findIndex(
+      (unit) => unit.type === "corner-base" || unit.orientation === "corner-right" || unit.orientation === "corner-left"
+    );
+    const frontRun = cornerIndex < 0 ? baseUnits : baseUnits.slice(0, cornerIndex + 1);
+    const standardBaseUnits = baseUnits.filter((unit) => unit.type !== "tall" && unit.type !== "fridge");
+    const maxBaseHeight = standardBaseUnits.length > 0
+      ? Math.max(...standardBaseUnits.map((unit) => unit.height))
+      : 720;
+    const maxTallHeight = baseUnits.reduce(
+      (max, unit) => unit.type === "tall" || unit.type === "fridge" ? Math.max(max, unit.height) : max,
+      0,
+    );
+    const countertopHeight = params.hasCountertop ? (params.countertopThickness ?? params.tableTopThickness ?? 30) : 0;
+    const wallTop = wallUnits.reduce(
+      (max, unit) => Math.max(max, plinthHeight + maxBaseHeight + countertopHeight + (unit.bottomOffset ?? 600) + unit.height),
+      0,
+    );
+
+    width = frontRun.reduce((sum, unit) => sum + unit.width, 0) || 600;
+    height = Math.max(
+      plinthHeight + maxBaseHeight + countertopHeight,
+      plinthHeight + maxTallHeight,
+      wallTop,
+    );
+    depth = baseUnits.length > 0
+      ? Math.max(...baseUnits.flatMap((unit) => [unit.depth, unit.cornerDepth ?? 0]))
+      : 600;
+  } else if (params.category === "Wardrobe") {
+    const units = params.wardrobeUnits ?? [];
+    const mainUnits = units.filter((unit) => unit.type !== "top");
+    const topUnits = units.filter((unit) => unit.type === "top");
+    const plinthHeight = params.baseType === "floating" ? 0 : (params.plinthHeight ?? 80);
+    const maxMainHeight = mainUnits.length > 0 ? Math.max(...mainUnits.map((unit) => unit.height)) : 2100;
+    const maxTopHeight = topUnits.length > 0 ? Math.max(...topUnits.map((unit) => unit.height)) : 0;
+
+    width = mainUnits.length > 0 ? mainUnits.reduce((sum, unit) => sum + unit.width, 0) : 900;
+    height = plinthHeight + maxMainHeight + maxTopHeight;
+    depth = params.depth || 600;
+  }
+
+  return { width, height, depth };
+}
+
 interface FurnitureMeshProps {
   params: FurnitureParams;
   groupRef: React.RefObject<THREE.Group | null>;
+  onModelReady?: () => void;
   onSelectUnit?: (id: string) => void;
   onSelectUnits?: (ids: string[]) => void;
   onAddAdjacentUnit?: (sourceId: string, direction: "left" | "right" | "top") => void;
@@ -250,6 +311,7 @@ let hoverWardrobeTimer: ReturnType<typeof setTimeout> | null = null;
 export default function FurnitureMesh({
   params,
   groupRef,
+  onModelReady,
   onSelectUnit,
   onSelectUnits: propOnSelectUnits,
   onAddAdjacentUnit,
@@ -259,6 +321,10 @@ export default function FurnitureMesh({
   onSelectDivision: propOnSelectDivision,
   onRemoveDivision: propOnRemoveDivision,
 }: FurnitureMeshProps) {
+  useEffect(() => {
+    onModelReady?.();
+  }, [onModelReady]);
+
   const onSelectDivision = propOnSelectDivision || params.onSelectDivision;
   const onRemoveDivision = propOnRemoveDivision || params.onRemoveDivision;
   const selectedDivision = params.selectedDivision;
@@ -271,7 +337,6 @@ export default function FurnitureMesh({
     depth,
     category,
     materialType,
-    showDimensions,
     wireframe,
     boardThickness = 18,
     tableTopThickness = 18,
@@ -1399,8 +1464,12 @@ export default function FurnitureMesh({
       const u = baseUnits[i];
       const isCorner = u.type === "corner-base" || u.orientation === "corner-right" || u.orientation === "corner-left";
       const uW = u.width / 1000;
-      const uH = u.height / 1000;
+      const isFloorStanding = u.hasNoBottom || u.type === "fridge" || u.type === "dishwasher";
+      // Removing the toe kick lowers the carcass to the floor; absorb that
+      // height into the carcass so it remains aligned with adjacent units.
+      const uH = u.height / 1000 + (isFloorStanding ? plinthH : 0);
       const uD = isCorner ? (u.depth ? u.depth / 1000 : 0.9) : (u.depth ? u.depth / 1000 : D_STD);
+      const unitBaseY = isFloorStanding ? 0 : plinthH;
 
       if (!isCorner && curRun === 0) {
         // Straight unit on primary run (along X, facing +Z)
@@ -1409,7 +1478,7 @@ export default function FurnitureMesh({
         cursorX += uW;
         layoutBaseItems.push({
           unit: u,
-          pos: [cx, plinthH, cz],
+          pos: [cx, unitBaseY, cz],
           rotY: 0,
           uW,
           uH,
@@ -1432,7 +1501,7 @@ export default function FurnitureMesh({
 
         layoutBaseItems.push({
           unit: u,
-          pos: [cx, plinthH, cz],
+          pos: [cx, unitBaseY, cz],
           rotY,
           uW: cornerW,
           uH,
@@ -1453,7 +1522,7 @@ export default function FurnitureMesh({
 
         layoutBaseItems.push({
           unit: u,
-          pos: [cx, plinthH, cz],
+          pos: [cx, unitBaseY, cz],
           rotY,
           uW,
           uH,
@@ -1665,8 +1734,8 @@ export default function FurnitureMesh({
           <group>
             {centeredBaseItems.map((item, bi) => {
               const uMat = getUnitMaterial(item.unit.materialType);
-              if (item.unit.type === "fridge") {
-                return null; // Open base to floor for sliding fridge in
+              if (item.unit.hasNoBottom || item.unit.type === "fridge" || item.unit.type === "dishwasher") {
+                return null; // Floor-standing units have no toe kick / plinth
               }
               if (item.isCorner) {
                 // L-Corner Plinth
@@ -1720,6 +1789,9 @@ export default function FurnitureMesh({
         {centeredBaseItems.length > 0 && plinthH > 0 && baseType === "legs" && (
           <group>
             {centeredBaseItems.map((item, bi) => {
+              if (item.unit.hasNoBottom || item.unit.type === "fridge" || item.unit.type === "dishwasher") {
+                return null; // Floor-standing units sit directly on the floor
+              }
               const uW = item.uW;
               const uD = item.uD;
               const legInsetX = 0.045;
@@ -1756,7 +1828,7 @@ export default function FurnitureMesh({
               if (item.unit.type === "tall" || item.unit.type === "fridge" || item.unit.hasNoCountertop) {
                 return null;
               }
-              const ctY = plinthH + item.uH + countertopThick / 2;
+              const ctY = plinthH + item.unit.height / 1000 + countertopThick / 2;
               if (item.isCorner) {
                 // L-Corner Countertop (Run 0 part + Turned part)
                 const armD = (item.unit.cornerDepth || 600) / 1000;
@@ -1953,14 +2025,18 @@ export default function FurnitureMesh({
                   const armD = (unit.cornerDepth || 600) / 1000;
                   return (
                     <>
-                      <mesh position={[0, t / 2, -uD / 2 + armD / 2]} material={uMat} castShadow>
-                        <boxGeometry args={[uW, t, armD]} />
-                        <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
-                      </mesh>
-                      <mesh position={[uW / 2 - armD / 2, t / 2, -uD / 2 + armD + (uD - armD) / 2]} material={uMat} castShadow>
-                        <boxGeometry args={[armD, t, uD - armD]} />
-                        <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
-                      </mesh>
+                      {!unit.hasNoBottom && (
+                        <>
+                          <mesh position={[0, t / 2, -uD / 2 + armD / 2]} material={uMat} castShadow>
+                            <boxGeometry args={[uW, t, armD]} />
+                            <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+                          </mesh>
+                          <mesh position={[uW / 2 - armD / 2, t / 2, -uD / 2 + armD + (uD - armD) / 2]} material={uMat} castShadow>
+                            <boxGeometry args={[armD, t, uD - armD]} />
+                            <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+                          </mesh>
+                        </>
+                      )}
 
                       {/* Carcase Panels - Top Stretchers / Countertop Support */}
                       <mesh position={[0, uH - t / 2, -uD / 2 + armD / 2]} material={uMat} castShadow>
@@ -2065,13 +2141,17 @@ export default function FurnitureMesh({
 
                 {/* Left Snap Detector on Run 0 */}
                 {activeTool === "add-base" && isHovered && (
-                  <group position={[-uW / 2 - 0.12, uH / 2, -uD / 2 + D_STD / 2]}>
+                  <group position={[-uW / 2 - 0.18, uH / 2, -uD / 2 + D_STD / 2]}>
                     <mesh
                       onPointerOver={(e) => { e.stopPropagation(); setHoveredSnap({ unitId: unit.id, side: "left" }); }}
                       onPointerOut={(e) => { e.stopPropagation(); setHoveredSnap(null); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddAdjacentUnit?.(unit.id, "left");
+                      }}
                     >
-                      <boxGeometry args={[0.24, uH, D_STD]} />
-                      <meshBasicMaterial color="#38bdf8" transparent opacity={0.4} />
+                      <boxGeometry args={[0.36, uH + 0.08, D_STD + 0.08]} />
+                      <meshBasicMaterial color="#38bdf8" transparent opacity={0.2} depthWrite={false} />
                       <Edges threshold={1} color="#38bdf8" />
                     </mesh>
                     <Html position={[0, 0, D_STD / 2 + 0.04]} center>
@@ -2102,6 +2182,15 @@ export default function FurnitureMesh({
                 {/* Hover Action: Continue Run 1 along Turned Z */}
                 {activeTool === "add-base" && isHovered && (
                   <group position={[uW / 2 - D_STD / 2, uH / 2, uD / 2 + 0.08]}>
+                    <mesh
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddAdjacentUnit?.(unit.id, "right");
+                      }}
+                    >
+                      <boxGeometry args={[D_STD + 0.08, uH + 0.08, 0.36]} />
+                      <meshBasicMaterial color="#10b981" transparent opacity={0.12} depthWrite={false} />
+                    </mesh>
                     <Html center>
                       <div
                         onClick={(e) => {
@@ -2129,13 +2218,17 @@ export default function FurnitureMesh({
 
                 {/* Place Corner Wall Unit Above */}
                 {activeTool === "add-wall" && isHovered && (
-                  <group position={[0, uH + 0.35, 0]}>
+                  <group position={[0, uH + 0.2, 0]}>
                     <mesh
                       onPointerOver={(e) => { e.stopPropagation(); setHoveredSnap({ unitId: unit.id, side: "top" }); }}
                       onPointerOut={(e) => { e.stopPropagation(); setHoveredSnap(null); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddAdjacentUnit?.(unit.id, "top");
+                      }}
                     >
-                      <boxGeometry args={[0.6, 0.3, 0.6]} />
-                      <meshBasicMaterial color="#c084fc" transparent opacity={0.3} />
+                      <boxGeometry args={[0.9, 0.4, 0.9]} />
+                      <meshBasicMaterial color="#c084fc" transparent opacity={0.16} depthWrite={false} />
                       <Edges threshold={1} color="#c084fc" />
                     </mesh>
                     <Html position={[0, 0, 0.35]} center>
@@ -2457,13 +2550,17 @@ export default function FurnitureMesh({
               {activeTool === "add-base" && isHovered && (
                 <group>
                   {/* Left Snap Detector (Places unit to the left of this cabinet) */}
-                  <group position={[-uW / 2 - 0.12, uH / 2, 0]}>
+                  <group position={[-uW / 2 - 0.18, uH / 2, 0]}>
                     <mesh
                       onPointerOver={(e) => { e.stopPropagation(); setHoveredSnap({ unitId: unit.id, side: "left" }); }}
                       onPointerOut={(e) => { e.stopPropagation(); setHoveredSnap(null); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddAdjacentUnit?.(unit.id, "left");
+                      }}
                     >
-                      <boxGeometry args={[0.24, uH, uD]} />
-                      <meshBasicMaterial color="#38bdf8" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "left" ? 0.45 : 0.2} />
+                      <boxGeometry args={[0.36, uH + 0.08, uD + 0.08]} />
+                      <meshBasicMaterial color="#38bdf8" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "left" ? 0.36 : 0.12} depthWrite={false} />
                       <Edges threshold={1} color="#38bdf8" />
                     </mesh>
                     <Html position={[0, 0, uD / 2 + 0.04]} center>
@@ -2491,13 +2588,17 @@ export default function FurnitureMesh({
                   </group>
 
                   {/* Right Snap Detector (Continues current run) */}
-                  <group position={[uW / 2 + 0.12, uH / 2, 0]}>
+                  <group position={[uW / 2 + 0.18, uH / 2, 0]}>
                     <mesh
                       onPointerOver={(e) => { e.stopPropagation(); setHoveredSnap({ unitId: unit.id, side: "right" }); }}
                       onPointerOut={(e) => { e.stopPropagation(); setHoveredSnap(null); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddAdjacentUnit?.(unit.id, "right");
+                      }}
                     >
-                      <boxGeometry args={[0.24, uH, uD]} />
-                      <meshBasicMaterial color="#38bdf8" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "right" ? 0.45 : 0.2} />
+                      <boxGeometry args={[0.36, uH + 0.08, uD + 0.08]} />
+                      <meshBasicMaterial color="#38bdf8" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "right" ? 0.36 : 0.12} depthWrite={false} />
                       <Edges threshold={1} color="#38bdf8" />
                     </mesh>
                     <Html position={[0, 0, uD / 2 + 0.04]} center>
@@ -2552,13 +2653,17 @@ export default function FurnitureMesh({
 
               {/* Place Wall Unit above this Base Cabinet */}
               {activeTool === "add-wall" && isHovered && (
-                <group position={[0, uH + 0.35, 0]}>
+                <group position={[0, uH + 0.2, 0]}>
                   <mesh
                     onPointerOver={(e) => { e.stopPropagation(); setHoveredSnap({ unitId: unit.id, side: "top" }); }}
                     onPointerOut={(e) => { e.stopPropagation(); setHoveredSnap(null); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAddAdjacentUnit?.(unit.id, "top");
+                    }}
                   >
-                    <boxGeometry args={[uW, 0.3, D_WALL_STD]} />
-                    <meshBasicMaterial color="#c084fc" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "top" ? 0.4 : 0.15} />
+                    <boxGeometry args={[uW + 0.24, 0.4, D_WALL_STD + 0.16]} />
+                    <meshBasicMaterial color="#c084fc" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "top" ? 0.34 : 0.1} depthWrite={false} />
                     <Edges threshold={1} color="#c084fc" />
                   </mesh>
                   <Html position={[0, 0, D_WALL_STD / 2 + 0.04]} center>
@@ -2589,7 +2694,23 @@ export default function FurnitureMesh({
               {/* Mode 2: Vertical Division on Hover */}
               {activeTool === "add-v-division" && isHovered && (
                 <group>
-                  <mesh position={[0, uH / 2, 0]}>
+                  <mesh
+                    position={[0, uH / 2, uD / 2 + 0.03]}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAddDivision?.(unit.id, "vertical");
+                    }}
+                  >
+                    <boxGeometry args={[uW - t * 2, uH - t * 2, 0.012]} />
+                    <meshBasicMaterial transparent opacity={0} depthWrite={false} side={THREE.DoubleSide} />
+                  </mesh>
+                  <mesh
+                    position={[0, uH / 2, 0]}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAddDivision?.(unit.id, "vertical");
+                    }}
+                  >
                     <boxGeometry args={[0.018, uH - t * 2, innerD]} />
                     <meshBasicMaterial color="#38bdf8" transparent opacity={0.6} />
                     <Edges threshold={1} color="#38bdf8" />
@@ -2627,7 +2748,22 @@ export default function FurnitureMesh({
                     const previewY = t + ((uH - t * 2) / (nextCount + 1)) * nextCount;
                     return (
                       <group position={[0, previewY, 0]}>
-                        <mesh>
+                        <mesh
+                          position={[0, 0, uD / 2 + 0.03]}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onAddDivision?.(unit.id, "horizontal");
+                          }}
+                        >
+                          <boxGeometry args={[uW - t * 2, uH - t * 2, 0.012]} />
+                          <meshBasicMaterial transparent opacity={0} depthWrite={false} side={THREE.DoubleSide} />
+                        </mesh>
+                        <mesh
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onAddDivision?.(unit.id, "horizontal");
+                          }}
+                        >
                           <boxGeometry args={[uW - t * 2, 0.018, innerD]} />
                           <meshBasicMaterial color="#10b981" transparent opacity={0.6} />
                           <Edges threshold={1} color="#10b981" />
@@ -2734,14 +2870,18 @@ export default function FurnitureMesh({
                     return (
                       <>
                         {/* L-Shaped Bottom Panel */}
-                        <mesh position={[0, t / 2, -uD / 2 + armD / 2]} material={uMat} castShadow>
-                          <boxGeometry args={[uW - t * 2, t, armD]} />
-                          <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
-                        </mesh>
-                        <mesh position={[uW / 2 - armD / 2, t / 2, -uD / 2 + armD + (uD - armD) / 2]} material={uMat} castShadow>
-                          <boxGeometry args={[armD - t, t, uD - armD]} />
-                          <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
-                        </mesh>
+                        {!unit.hasNoBottom && (
+                          <>
+                            <mesh position={[0, t / 2, -uD / 2 + armD / 2]} material={uMat} castShadow>
+                              <boxGeometry args={[uW - t * 2, t, armD]} />
+                              <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+                            </mesh>
+                            <mesh position={[uW / 2 - armD / 2, t / 2, -uD / 2 + armD + (uD - armD) / 2]} material={uMat} castShadow>
+                              <boxGeometry args={[armD - t, t, uD - armD]} />
+                              <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+                            </mesh>
+                          </>
+                        )}
 
                         {/* L-Shaped Solid Top Panel */}
                         <mesh position={[0, uH - t / 2, -uD / 2 + armD / 2]} material={uMat} castShadow>
@@ -2933,10 +3073,12 @@ export default function FurnitureMesh({
                     <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
                   </mesh>
                   {/* Bottom Panel (Sits between gables) */}
-                  <mesh position={[0, t / 2, 0]} material={uMat} castShadow>
-                    <boxGeometry args={[uW - t * 2, t, uD]} />
-                    <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
-                  </mesh>
+                  {!unit.hasNoBottom && (
+                    <mesh position={[0, t / 2, 0]} material={uMat} castShadow>
+                      <boxGeometry args={[uW - t * 2, t, uD]} />
+                      <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
+                    </mesh>
+                  )}
                   {/* 8mm Back Panel (Arkalık: inset 18mm from rear edge) */}
                   <mesh position={[0, uH / 2, -uD / 2 + 0.018 + 0.004]} material={uMat}>
                     <boxGeometry args={[uW - t * 2, uH - t * 2, 0.008]} />
@@ -3055,13 +3197,17 @@ export default function FurnitureMesh({
               {(isHovered || activeTool === "add-wall") && (
                 <group>
                   {/* Left Snap Detector (Adds to the left of this wall unit) */}
-                  <group position={[-uW / 2 - 0.12, uH / 2, 0]}>
+                  <group position={[-uW / 2 - 0.18, uH / 2, 0]}>
                     <mesh
                       onPointerOver={(e) => { e.stopPropagation(); setHoveredSnap({ unitId: unit.id, side: "left" }); }}
                       onPointerOut={(e) => { e.stopPropagation(); setHoveredSnap(null); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddAdjacentUnit?.(unit.id, "left");
+                      }}
                     >
-                      <boxGeometry args={[0.24, uH, uD]} />
-                      <meshBasicMaterial color="#c084fc" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "left" ? 0.45 : 0.2} />
+                      <boxGeometry args={[0.36, uH + 0.08, uD + 0.08]} />
+                      <meshBasicMaterial color="#c084fc" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "left" ? 0.36 : 0.12} depthWrite={false} />
                       <Edges threshold={1} color="#c084fc" />
                     </mesh>
                     <Html position={[0, 0, uD / 2 + 0.04]} center>
@@ -3091,13 +3237,17 @@ export default function FurnitureMesh({
                   </group>
 
                   {/* Right Snap Detector (Adds to the right of this wall unit) */}
-                  <group position={[uW / 2 + 0.12, uH / 2, 0]}>
+                  <group position={[uW / 2 + 0.18, uH / 2, 0]}>
                     <mesh
                       onPointerOver={(e) => { e.stopPropagation(); setHoveredSnap({ unitId: unit.id, side: "right" }); }}
                       onPointerOut={(e) => { e.stopPropagation(); setHoveredSnap(null); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddAdjacentUnit?.(unit.id, "right");
+                      }}
                     >
-                      <boxGeometry args={[0.24, uH, uD]} />
-                      <meshBasicMaterial color="#c084fc" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "right" ? 0.45 : 0.2} />
+                      <boxGeometry args={[0.36, uH + 0.08, uD + 0.08]} />
+                      <meshBasicMaterial color="#c084fc" transparent opacity={hoveredSnap?.unitId === unit.id && hoveredSnap?.side === "right" ? 0.36 : 0.12} depthWrite={false} />
                       <Edges threshold={1} color="#c084fc" />
                     </mesh>
                     <Html position={[0, 0, uD / 2 + 0.04]} center>
@@ -4357,6 +4507,16 @@ export default function FurnitureMesh({
                 {/* Mode 2: Vertical Division on Hover */}
                 {activeTool === "add-v-division" && isHovered && (
                   <group>
+                    <mesh
+                      position={[0, uH / 2, uD / 2 + 0.03]}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddDivision?.(unit.id, "vertical");
+                      }}
+                    >
+                      <boxGeometry args={[uW - t * 2, uH - t * 2, 0.012]} />
+                      <meshBasicMaterial transparent opacity={0} depthWrite={false} side={THREE.DoubleSide} />
+                    </mesh>
                     <mesh position={[0, uH / 2, 0]}>
                       <boxGeometry args={[0.018, uH - t * 2, innerD]} />
                       <meshBasicMaterial color="#38bdf8" transparent opacity={0.6} />
@@ -4399,6 +4559,16 @@ export default function FurnitureMesh({
                       const shelfX = unit.hasInternalDivider ? uW / 4 : 0;
                       return (
                         <group position={[shelfX, previewY, 0]}>
+                          <mesh
+                            position={[0, 0, uD / 2 + 0.03]}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAddDivision?.(unit.id, "horizontal");
+                            }}
+                          >
+                            <boxGeometry args={[shelfW, uH - t * 2, 0.012]} />
+                            <meshBasicMaterial transparent opacity={0} depthWrite={false} side={THREE.DoubleSide} />
+                          </mesh>
                           <mesh>
                             <boxGeometry args={[shelfW, 0.018, innerD]} />
                             <meshBasicMaterial color="#10b981" transparent opacity={0.6} />
@@ -4537,130 +4707,6 @@ export default function FurnitureMesh({
         ? renderWardrobeSystem()
         : renderTable()}
 
-      {/* Sleek CAD Dimension Tags with Exact Assembly Bounding Box & Plinth Included */}
-      {showDimensions && (() => {
-        let totalDimW = width;
-        let totalDimH = height;
-        let totalDimD = depth;
-
-        if (category === "Cabinet") {
-          const kUnits = kitchenUnits && kitchenUnits.length > 0 ? kitchenUnits : [{ width: 600, height: 720, depth: 600, type: "base" }];
-          const bUnits = kUnits.filter(u => u.type !== "wall" && u.type !== "corner-wall");
-          const wUnits = kUnits.filter(u => u.type === "wall" || u.type === "corner-wall");
-          const pBaseH = baseType === "floating" ? 0 : (plinthHeight ?? 80);
-          const cornerIndex = bUnits.findIndex((u) => u.type === "corner-base" || u.orientation === "corner-right" || u.orientation === "corner-left");
-          const run0Units = cornerIndex < 0 ? bUnits : bUnits.slice(0, cornerIndex + 1);
-          totalDimW = run0Units.reduce((acc, u) => acc + u.width, 0) || 600;
-          const standardBaseUnits = bUnits.filter((u) => u.type !== "tall" && u.type !== "fridge");
-          const maxBaseH = standardBaseUnits.length > 0 ? Math.max(...standardBaseUnits.map((u) => u.height)) : 720;
-          const maxTallTop = bUnits.reduce((max, u) => u.type === "tall" || u.type === "fridge" ? Math.max(max, u.height) : max, 0);
-          const hasCountertop = Boolean(params.hasCountertop);
-          const countertopH = hasCountertop ? (params.countertopThickness ?? tableTopThickness ?? 30) : 0;
-          const wallTop = wUnits.reduce((max, u) => Math.max(max, pBaseH + maxBaseH + countertopH + (u.bottomOffset ?? 600) + u.height), 0);
-          totalDimH = Math.max(pBaseH + maxBaseH + countertopH, pBaseH + maxTallTop, wallTop);
-          totalDimD = bUnits.length > 0 ? Math.max(...bUnits.map(u => u.depth)) : 600;
-        } else if (category === "Wardrobe") {
-          const wUnits = wardrobeUnits && wardrobeUnits.length > 0 ? wardrobeUnits : [{ width: 900, height: 2100, depth: 600, type: "main" }];
-          const mUnits = wUnits.filter(u => u.type !== "top");
-          const tUnits = wUnits.filter(u => u.type === "top");
-          const pWardH = baseType === "floating" ? 0 : (plinthHeight ?? 80);
-          totalDimW = mUnits.length > 0 ? mUnits.reduce((acc, u) => acc + u.width, 0) : 900;
-          const maxMainH = mUnits.length > 0 ? Math.max(...mUnits.map(u => u.height)) : 2100;
-          const maxTopH = tUnits.length > 0 ? Math.max(...tUnits.map(u => u.height)) : 0;
-          totalDimH = pWardH + maxMainH + maxTopH;
-          totalDimD = depth || 600;
-        } else {
-          totalDimW = width || 1400;
-          totalDimH = height || 750;
-          totalDimD = depth || 800;
-        }
-
-        const mDimW = totalDimW / 1000;
-        const mDimH = totalDimH / 1000;
-        const mDimD = totalDimD / 1000;
-
-        return (
-          <group>
-            {/* Top Width Tag */}
-            <Html
-              position={[0, mDimH + 0.08, mDimD / 2 + 0.03]}
-              center
-              zIndexRange={[100, 0]}
-            >
-              <div
-                style={{
-                  background: "rgba(13, 13, 18, 0.94)",
-                  border: "1px solid rgba(41, 114, 245, 0.7)",
-                  borderRadius: "4px",
-                  padding: "3px 8px",
-                  color: "#93c5fd",
-                  fontSize: "11px",
-                  fontWeight: 700,
-                  letterSpacing: "0.03em",
-                  whiteSpace: "nowrap",
-                  pointerEvents: "none",
-                  boxShadow: "0 2px 10px rgba(0,0,0,0.8)",
-                  userSelect: "none",
-                }}
-              >
-                W: {Math.round(totalDimW)} mm
-              </div>
-            </Html>
-
-            {/* Right Height Tag */}
-            <Html
-              position={[mDimW / 2 + 0.06, mDimH / 2, mDimD / 2 + 0.03]}
-              center
-              zIndexRange={[100, 0]}
-            >
-              <div
-                style={{
-                  background: "rgba(13, 13, 18, 0.94)",
-                  border: "1px solid rgba(41, 114, 245, 0.7)",
-                  borderRadius: "4px",
-                  padding: "3px 8px",
-                  color: "#93c5fd",
-                  fontSize: "11px",
-                  fontWeight: 700,
-                  letterSpacing: "0.03em",
-                  whiteSpace: "nowrap",
-                  pointerEvents: "none",
-                  boxShadow: "0 2px 10px rgba(0,0,0,0.8)",
-                  userSelect: "none",
-                }}
-              >
-                H: {Math.round(totalDimH)} mm
-              </div>
-            </Html>
-
-            {/* Left Depth Tag */}
-            <Html
-              position={[-mDimW / 2 - 0.06, 0.05, 0]}
-              center
-              zIndexRange={[100, 0]}
-            >
-              <div
-                style={{
-                  background: "rgba(13, 13, 18, 0.94)",
-                  border: "1px solid rgba(41, 114, 245, 0.7)",
-                  borderRadius: "4px",
-                  padding: "3px 8px",
-                  color: "#93c5fd",
-                  fontSize: "11px",
-                  fontWeight: 700,
-                  letterSpacing: "0.03em",
-                  whiteSpace: "nowrap",
-                  pointerEvents: "none",
-                  boxShadow: "0 2px 10px rgba(0,0,0,0.8)",
-                  userSelect: "none",
-                }}
-              >
-                D: {Math.round(totalDimD)} mm
-              </div>
-            </Html>
-          </group>
-        );
-      })()}
     </group>
   );
 }

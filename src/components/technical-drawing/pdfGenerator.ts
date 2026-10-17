@@ -1,5 +1,5 @@
 import { jsPDF } from "jspdf";
-import { ViewGeometry } from "./technicalDrawingUtils";
+import { getDefaultFabricationNotes, ViewGeometry } from "./technicalDrawingUtils";
 import { FurnitureParams } from "../modeler/FurnitureMesh";
 
 export interface PdfExportOptions {
@@ -171,9 +171,12 @@ export function exportToPdf(
   doc.setFont("helvetica", "bold");
   doc.setFontSize(6);
   doc.setTextColor(15, 23, 42);
+  const drawingWidth = front.width;
+  const drawingHeight = front.height;
+  const drawingDepth = top.height;
   const dimStr = unit === "cm"
-    ? `${(params.width / 10).toFixed(0)}x${(params.height / 10).toFixed(0)}x${(params.depth / 10).toFixed(0)} cm`
-    : `${Math.round(params.width)}x${Math.round(params.height)}x${Math.round(params.depth)} mm`;
+    ? `${(drawingWidth / 10).toFixed(0)}x${(drawingHeight / 10).toFixed(0)}x${(drawingDepth / 10).toFixed(0)} cm`
+    : `${Math.round(drawingWidth)}x${Math.round(drawingHeight)}x${Math.round(drawingDepth)} mm`;
   doc.text(dimStr, tbX + 2.5, tbY + 22);
 
   doc.setFont("helvetica", "normal");
@@ -202,7 +205,7 @@ export function exportToPdf(
   doc.setFont("helvetica", "normal");
   doc.setFontSize(5);
   doc.setTextColor(71, 85, 105);
-  const legendNotesText = notes || `18mm MFC Carcass. All dimensions in ${unit}. Verify all site measurements prior to joinery fabrication.`;
+  const legendNotesText = notes || getDefaultFabricationNotes(params.boardThickness, unit);
   doc.text(legendNotesText.length > 70 ? legendNotesText.slice(0, 67) + "..." : legendNotesText, tbX + 2.5, tbY + 30);
 
   // 3. RENDER 4 VIEWPORTS EXACTLY ACCORDING TO USER'S INTERACTIVE SCREEN ARRANGEMENT
@@ -388,20 +391,20 @@ export function exportToPdf(
     isoPos.x,
     isoPos.y,
     viewTitles?.iso || `3D Isometric Projection (${options.isoAngle || 45}°)`,
-    "DOORS VISIBLE"
+    "VISIBLE EDGES ONLY"
   );
   renderViewGeometry(
     front,
     frontPos.x,
     frontPos.y,
-    viewTitles?.front || "Front Elevation (Interior Joinery & Shelves)",
+    viewTitles?.front || "Front Elevation",
     scaleText
   );
   renderViewGeometry(
     side,
     sidePos.x,
     sidePos.y,
-    viewTitles?.side || "Side / Cross-Section",
+    viewTitles?.side || "Side Elevation",
     scaleText
   );
 
