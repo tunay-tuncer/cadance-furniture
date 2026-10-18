@@ -186,6 +186,7 @@ export function exportToDxf(
   iso.lines.forEach(l => {
     addLine(isoOriginX + l.x1, isoOriginY + l.y1, isoOriginX + l.x2, isoOriginY + l.y2, getLineLayer(l.type));
   });
+  iso.dimensions.forEach(d => addDimension(d, isoOriginX, isoOriginY));
 
   // CAD Title Block border in Model Space
   const totalSheetW = sideOriginX + Math.max(side.width, iso.width) + 300;

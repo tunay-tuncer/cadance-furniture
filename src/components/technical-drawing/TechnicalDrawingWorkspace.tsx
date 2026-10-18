@@ -329,7 +329,7 @@ export default function TechnicalDrawingWorkspace({
     if (!projectionEnabled) return visibleEdgesOnly(parametricIsoView);
     // The parameter-based isometric fallback cannot occlude geometry reliably.
     // Keep the viewport footprint stable while waiting for the live model projection.
-    return { ...visibleEdgesOnly(parametricIsoView), rects: [], lines: [], circles: [], dimensions: [] };
+    return { ...visibleEdgesOnly(parametricIsoView), rects: [], lines: [], circles: [], dimensions: parametricIsoView.dimensions };
   }, [projectedViews, parametricIsoView, projectionEnabled]);
 
   const measuredDimensions = projectedViews

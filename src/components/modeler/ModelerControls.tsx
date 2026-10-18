@@ -1804,7 +1804,7 @@ export default function ModelerControls({
                     {params.hasCountertop && (
                       <div className={styles.sliderCard} style={{ marginTop: "0.4rem" }}>
                         <div className={styles.sliderHead}>
-                          <span className={styles.sliderName}>Countertop Height / Thickness</span>
+                          <span className={styles.sliderName}>Countertop Slab Thickness</span>
                           <CadNumberInput
                             value={params.countertopThickness ?? 30}
                             onChange={(val) => updateParam("countertopThickness", val)}
@@ -1843,6 +1843,31 @@ export default function ModelerControls({
                         />
                       </div>
                     </div>
+
+                    {params.hasBacksplash && (
+                      <div className={styles.sliderCard} style={{ marginTop: "0.4rem" }}>
+                        <div className={styles.sliderHead}>
+                          <span className={styles.sliderName}>Cover Wall Height</span>
+                          <CadNumberInput
+                            value={params.backsplashHeight ?? 600}
+                            onChange={(val) => updateParam("backsplashHeight", val)}
+                            min={100}
+                            max={1200}
+                            step={10}
+                            unit="mm"
+                          />
+                        </div>
+                        <input
+                          type="range"
+                          min={100}
+                          max={1200}
+                          step={10}
+                          value={params.backsplashHeight ?? 600}
+                          onChange={(e) => updateParam("backsplashHeight", Number(e.target.value))}
+                          className={styles.rangeSlider}
+                        />
+                      </div>
+                    )}
                   </div>
                 </>
               ) : (

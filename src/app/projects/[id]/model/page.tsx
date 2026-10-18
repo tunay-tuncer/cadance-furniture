@@ -149,6 +149,7 @@ export default function ModelerPage({ params }: PageProps) {
     hasCountertop: false,
     countertopThickness: 30,
     hasBacksplash: false,
+    backsplashHeight: 600,
     kitchenUnits: DEFAULT_KITCHEN_UNITS,
     selectedUnitId: "base-1",
     selectedUnitIds: ["base-1"],

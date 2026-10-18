@@ -12,6 +12,7 @@ type DepthTriangle = { points: ProjectedTriangle; area: number };
 const EMPTY_VIEW: ViewGeometry = { width: 1, height: 1, rects: [], lines: [], circles: [], dimensions: [] };
 
 function isIgnoredDrawingMesh(mesh: THREE.Mesh): boolean {
+  if (mesh.userData?.isHandleDrawing === true) return false;
   for (let ancestor: THREE.Object3D | null = mesh; ancestor; ancestor = ancestor.parent) {
     if (ancestor.userData?.drawingIgnore === true) return true;
   }
@@ -19,6 +20,7 @@ function isIgnoredDrawingMesh(mesh: THREE.Mesh): boolean {
 }
 
 function isDrawingMesh(mesh: THREE.Mesh): boolean {
+  if (mesh.userData?.isHandleDrawing === true) return true;
   if (isIgnoredDrawingMesh(mesh)) return false;
   const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
   return materials.some(
@@ -28,6 +30,7 @@ function isDrawingMesh(mesh: THREE.Mesh): boolean {
 }
 
 function isOpaqueModelMesh(mesh: THREE.Mesh): boolean {
+  if (mesh.userData?.isHandleDrawing === true) return true;
   if (isIgnoredDrawingMesh(mesh)) return false;
   const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
   return materials.some(
@@ -91,13 +94,27 @@ export function projectFurnitureMeshes(
   const edgeSets: Record<ProjectionKind, ProjectedEdge[]> = { front: [], top: [], side: [], iso: [] };
   const localPoint = new THREE.Vector3();
 
+  let worldMinX = Infinity, worldMaxX = -Infinity;
+  let worldMinY = Infinity, worldMaxY = -Infinity;
+  let worldMinZ = Infinity, worldMaxZ = -Infinity;
+
   for (const mesh of sourceMeshes) {
     const meshOccludes = isOpaqueModelMesh(mesh);
     const positions = mesh.geometry.getAttribute("position") as THREE.BufferAttribute;
     const worldVertices: THREE.Vector3[] = [];
+    const isProxyHandle = Boolean(mesh.userData?.isHandleDrawing);
     for (let i = 0; i < positions.count; i++) {
       localPoint.fromBufferAttribute(positions, i);
-      worldVertices.push(localPoint.clone().applyMatrix4(mesh.matrixWorld));
+      const worldV = localPoint.clone().applyMatrix4(mesh.matrixWorld);
+      worldVertices.push(worldV);
+      if (!isProxyHandle) {
+        worldMinX = Math.min(worldMinX, worldV.x * 1000);
+        worldMaxX = Math.max(worldMaxX, worldV.x * 1000);
+        worldMinY = Math.min(worldMinY, worldV.y * 1000);
+        worldMaxY = Math.max(worldMaxY, worldV.y * 1000);
+        worldMinZ = Math.min(worldMinZ, worldV.z * 1000);
+        worldMaxZ = Math.max(worldMaxZ, worldV.z * 1000);
+      }
     }
 
     const indices = mesh.geometry.index;
@@ -318,6 +335,92 @@ export function projectFurnitureMeshes(
         value: height,
         text: formatValue(height),
         orientation: "vertical",
+      });
+    } else {
+      // Projected Isometric Dimensions (Width, Depth, Height)
+      const safeMinX = Number.isFinite(worldMinX) ? worldMinX : 0;
+      const safeMaxX = Number.isFinite(worldMaxX) ? worldMaxX : 1000;
+      const safeMinY = Number.isFinite(worldMinY) ? worldMinY : 0;
+      const safeMaxY = Number.isFinite(worldMaxY) ? worldMaxY : 1000;
+      const safeMinZ = Number.isFinite(worldMinZ) ? worldMinZ : 0;
+      const safeMaxZ = Number.isFinite(worldMaxZ) ? worldMaxZ : 600;
+
+      const W_model = Math.round(safeMaxX - safeMinX);
+      const H_model = Math.round(safeMaxY - safeMinY);
+      const D_model = Math.round(safeMaxZ - safeMinZ);
+
+      const toIsoCanvas = (xMm: number, yMm: number, zMm: number) => {
+        const pt = projectPoint(new THREE.Vector3(xMm / 1000, yMm / 1000, zMm / 1000), "iso");
+        return { x: pt.u - minU, y: pt.v - minV };
+      };
+
+      const frontZ = Math.cos(angle) >= 0 ? safeMaxZ : safeMinZ;
+      const backZ = Math.cos(angle) >= 0 ? safeMinZ : safeMaxZ;
+      const frontOffsetZ = Math.cos(angle) >= 0 ? 40 : -40;
+      const backOffsetZ = Math.cos(angle) >= 0 ? -20 : 20;
+
+      const rightX = Math.cos(angle) >= 0 ? safeMaxX : safeMinX;
+      const leftX = Math.cos(angle) >= 0 ? safeMinX : safeMaxX;
+      const rightOffsetX = Math.cos(angle) >= 0 ? 40 : -40;
+
+      // 1. Overall Width Dimension (along front bottom edge)
+      const pW0 = toIsoCanvas(leftX, safeMinY, frontZ);
+      const pW1 = toIsoCanvas(rightX, safeMinY, frontZ);
+      const dW0 = toIsoCanvas(leftX, safeMinY - 30, frontZ + frontOffsetZ);
+      const dW1 = toIsoCanvas(rightX, safeMinY - 30, frontZ + frontOffsetZ);
+      dimensions.push({
+        id: "iso-dim-w",
+        x1: dW0.x,
+        y1: dW0.y,
+        x2: dW1.x,
+        y2: dW1.y,
+        refX1: pW0.x,
+        refY1: pW0.y,
+        refX2: pW1.x,
+        refY2: pW1.y,
+        value: W_model,
+        text: `W: ${formatValue(W_model)}`,
+        orientation: "aligned",
+      });
+
+      // 2. Overall Depth Dimension (along right side bottom edge)
+      const pD0 = toIsoCanvas(rightX, safeMinY, backZ);
+      const pD1 = toIsoCanvas(rightX, safeMinY, frontZ);
+      const dD0 = toIsoCanvas(rightX + rightOffsetX, safeMinY - 30, backZ);
+      const dD1 = toIsoCanvas(rightX + rightOffsetX, safeMinY - 30, frontZ);
+      dimensions.push({
+        id: "iso-dim-d",
+        x1: dD0.x,
+        y1: dD0.y,
+        x2: dD1.x,
+        y2: dD1.y,
+        refX1: pD0.x,
+        refY1: pD0.y,
+        refX2: pD1.x,
+        refY2: pD1.y,
+        value: D_model,
+        text: `D: ${formatValue(D_model)}`,
+        orientation: "aligned",
+      });
+
+      // 3. Overall Height Dimension (along upright edge)
+      const pH0 = toIsoCanvas(rightX, safeMinY, backZ);
+      const pH1 = toIsoCanvas(rightX, safeMaxY, backZ);
+      const dH0 = toIsoCanvas(rightX + rightOffsetX + 5, safeMinY, backZ + backOffsetZ);
+      const dH1 = toIsoCanvas(rightX + rightOffsetX + 5, safeMaxY, backZ + backOffsetZ);
+      dimensions.push({
+        id: "iso-dim-h",
+        x1: dH0.x,
+        y1: dH0.y,
+        x2: dH1.x,
+        y2: dH1.y,
+        refX1: pH0.x,
+        refY1: pH0.y,
+        refX2: pH1.x,
+        refY2: pH1.y,
+        value: H_model,
+        text: `H: ${formatValue(H_model)}`,
+        orientation: "aligned",
       });
     }
 

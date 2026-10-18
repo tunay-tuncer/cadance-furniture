@@ -117,68 +117,68 @@ export function getKitchenData(params: FurnitureParams): KitchenDrawingData {
   const units: KitchenCabinetUnit[] = params.kitchenUnits && params.kitchenUnits.length > 0
     ? params.kitchenUnits
     : [
-        {
-          id: "base-1",
-          name: "Base Cabinet 1",
-          type: "base",
-          width: 600,
-          height: 720,
-          depth: 600,
-          doorType: "singleLeft",
-          drawerCount: 0,
-          internalShelves: 2,
-          handleType: "bar",
-          handleFinish: "black",
-        },
-        {
-          id: "base-2",
-          name: "Base Cabinet 2",
-          type: "base",
-          width: 800,
-          height: 720,
-          depth: 600,
-          doorType: "double",
-          drawerCount: 0,
-          internalShelves: 2,
-          handleType: "bar",
-          handleFinish: "black",
-        },
-        {
-          id: "wall-1",
-          name: "Upper Wall Cabinet 1",
-          type: "wall",
-          width: 600,
-          height: 720,
-          depth: 350,
-          doorType: "singleLeft",
-          drawerCount: 0,
-          internalShelves: 2,
-          handleType: "bar",
-          handleFinish: "black",
-        },
-        {
-          id: "wall-2",
-          name: "Upper Wall Cabinet 2",
-          type: "wall",
-          width: 800,
-          height: 720,
-          depth: 350,
-          doorType: "double",
-          drawerCount: 0,
-          internalShelves: 2,
-          handleType: "bar",
-          handleFinish: "black",
-        },
-      ];
+      {
+        id: "base-1",
+        name: "Base Cabinet 1",
+        type: "base",
+        width: 600,
+        height: 720,
+        depth: 600,
+        doorType: "singleLeft",
+        drawerCount: 0,
+        internalShelves: 2,
+        handleType: "bar",
+        handleFinish: "black",
+      },
+      {
+        id: "base-2",
+        name: "Base Cabinet 2",
+        type: "base",
+        width: 800,
+        height: 720,
+        depth: 600,
+        doorType: "double",
+        drawerCount: 0,
+        internalShelves: 2,
+        handleType: "bar",
+        handleFinish: "black",
+      },
+      {
+        id: "wall-1",
+        name: "Upper Wall Cabinet 1",
+        type: "wall",
+        width: 600,
+        height: 720,
+        depth: 350,
+        doorType: "singleLeft",
+        drawerCount: 0,
+        internalShelves: 2,
+        handleType: "bar",
+        handleFinish: "black",
+      },
+      {
+        id: "wall-2",
+        name: "Upper Wall Cabinet 2",
+        type: "wall",
+        width: 800,
+        height: 720,
+        depth: 350,
+        doorType: "double",
+        drawerCount: 0,
+        internalShelves: 2,
+        handleType: "bar",
+        handleFinish: "black",
+      },
+    ];
 
   const baseUnits = units.filter((u) => u.type !== "wall" && u.type !== "corner-wall");
   const wallUnits = units.filter((u) => u.type === "wall" || u.type === "corner-wall");
   const plinthH = params.baseType === "floating" ? 0 : (params.plinthHeight ?? 80);
   const hasCountertop = Boolean(params.hasCountertop);
   const countertopThick = hasCountertop ? (params.countertopThickness ?? params.tableTopThickness ?? 30) : 0;
-  const splashH = wallUnits.length > 0 && wallUnits[0].bottomOffset !== undefined
+  const splashH = params.backsplashHeight ?? (wallUnits.length > 0 && wallUnits[0].bottomOffset !== undefined
     ? wallUnits[0].bottomOffset
-    : 600; // Standard 600mm backsplash clearance gap (Turkish standard tezgah arası)
+    : 600); // Standard 600mm backsplash clearance gap (Turkish standard tezgah arası)
 
   const STD_BASE_DEPTH = 600;
   const STD_WALL_DEPTH = 350;
@@ -394,21 +394,21 @@ export function getWardrobeData(params: FurnitureParams): WardrobeDrawingData {
   const rawUnits: WardrobeUnit[] = params.wardrobeUnits && params.wardrobeUnits.length > 0
     ? params.wardrobeUnits
     : [
-        {
-          id: "wardrobe-1",
-          name: "Wardrobe 1",
-          type: "main",
-          width: 900,
-          height: 2100,
-          depth: 600,
-          doorType: "sliding",
-          internalShelves: 1,
-          hasDrawers: true,
-          drawerCount: 2,
-          hasClothesHangerRail: true,
-          hasInternalDivider: false,
-        },
-      ];
+      {
+        id: "wardrobe-1",
+        name: "Wardrobe 1",
+        type: "main",
+        width: 900,
+        height: 2100,
+        depth: 600,
+        doorType: "sliding",
+        internalShelves: 1,
+        hasDrawers: true,
+        drawerCount: 2,
+        hasClothesHangerRail: true,
+        hasInternalDivider: false,
+      },
+    ];
 
   const mainUnits = rawUnits.filter((u) => u.type !== "top");
   const topUnits = rawUnits.filter((u) => u.type === "top");
@@ -677,15 +677,45 @@ export function generateFrontElevation(params: FurnitureParams, unit: "mm" | "cm
     // Optional Backsplash Wall Cladding Panel (covers wall between base/countertop and wall units)
     if (params.hasBacksplash && frontWallUnits.length > 0) {
       const bsY1 = ctY + (kd.hasCountertop ? kd.countertopThick : 0);
-      const bsY2 = ctY + kd.countertopThick + (frontWallUnits[0].bottomOffset !== undefined ? frontWallUnits[0].bottomOffset : kd.splashH);
-      rects.push({
-        id: "backsplash-front",
-        x: 0,
-        y: bsY1,
-        width: kd.run0Width,
-        height: Math.max(10, bsY2 - bsY1),
-        type: "interior",
+      const bsY2 = bsY1 + kd.splashH;
+      let runningX = 0;
+      let segStartX: number | null = null;
+      let segEndX = 0;
+      let splashSegIdx = 0;
+
+      kd.run0BaseUnits.forEach((u) => {
+        const uHasSplash = u.type !== "tall" && u.type !== "fridge" && !u.hasNoCountertop;
+        if (uHasSplash) {
+          if (segStartX === null) {
+            segStartX = runningX;
+          }
+          segEndX = runningX + u.width;
+        } else {
+          if (segStartX !== null) {
+            rects.push({
+              id: `backsplash-front-${++splashSegIdx}`,
+              x: segStartX,
+              y: bsY1,
+              width: segEndX - segStartX,
+              height: Math.max(10, bsY2 - bsY1),
+              type: "interior",
+            });
+            segStartX = null;
+          }
+        }
+        runningX += u.width;
       });
+      if (segStartX !== null) {
+        const cornerExtra = kd.cornerBaseUnit ? kd.cornerBaseUnit.width : 0;
+        rects.push({
+          id: `backsplash-front-${++splashSegIdx}`,
+          x: segStartX,
+          y: bsY1,
+          width: (segEndX - segStartX) + cornerExtra,
+          height: Math.max(10, bsY2 - bsY1),
+          type: "interior",
+        });
+      }
     }
 
     if (frontWallUnits.length > 0) {
@@ -2744,10 +2774,21 @@ export function generateIsometricView(
       // 4. Backsplash Wall Panel (if enabled and wall units exist)
       if (params.hasBacksplash && kd.wallLayout.length > 0) {
         const bsY1 = ctY + (kd.hasCountertop ? kd.countertopThick : 0);
-        const bsY2 = kd.wallLayout[0].y;
+        const bsY2 = bsY1 + kd.splashH;
         if (bsY2 > bsY1) {
-          addBox3d(0, bsY1, 0, kd.run0Width, bsY2, 12, "interior", { hideBottom: true, hideBack: true });
-          addBox3d(kd.run0Width - 12, bsY1, 12, kd.run0Width, bsY2, kd.run1Depth, "interior", { hideBottom: true, hideBack: true });
+          kd.baseLayout.forEach((item) => {
+            if (item.unit.type === "tall" || item.unit.type === "fridge" || item.unit.hasNoCountertop) {
+              return;
+            }
+            if (item.isCorner) {
+              addBox3d(item.x, bsY1, 0, kd.run0Width, bsY2, 12, "interior", { hideBottom: true, hideBack: true });
+              addBox3d(kd.run0Width - 12, bsY1, 12, kd.run0Width, bsY2, item.z + item.depth, "interior", { hideBottom: true, hideBack: true });
+            } else if (item.runIndex === 0) {
+              addBox3d(item.x, bsY1, 0, item.x + item.width, bsY2, 12, "interior", { hideBottom: true, hideBack: true });
+            } else {
+              addBox3d(kd.run0Width - 12, bsY1, item.z, kd.run0Width, bsY2, item.z + item.width, "interior", { hideBottom: true, hideBack: true });
+            }
+          });
         }
       }
 
@@ -2965,9 +3006,28 @@ export function generateIsometricView(
 
       // 4. Backsplash Wall Panel (if enabled and wall units exist)
       if (params.hasBacksplash && kd.wallUnits.length > 0) {
-        const wallY = ctY + (kd.hasCountertop ? kd.countertopThick : 0) + kd.splashH;
         const bsY1 = ctY + (kd.hasCountertop ? kd.countertopThick : 0);
-        addBox3d(0, bsY1, 0, kd.totalBaseW, wallY, 12, "interior", { hideBottom: true, hideBack: true });
+        const wallY = bsY1 + kd.splashH;
+        let segStartX: number | null = null;
+        let segEndX = 0;
+        let walkX = 0;
+
+        kd.baseUnits.forEach((u) => {
+          const uHasSplash = u.type !== "tall" && u.type !== "fridge" && !u.hasNoCountertop;
+          if (uHasSplash) {
+            if (segStartX === null) segStartX = walkX;
+            segEndX = walkX + u.width;
+          } else {
+            if (segStartX !== null) {
+              addBox3d(segStartX, bsY1, 0, segEndX, wallY, 12, "interior", { hideBottom: true, hideBack: true });
+              segStartX = null;
+            }
+          }
+          walkX += u.width;
+        });
+        if (segStartX !== null) {
+          addBox3d(segStartX, bsY1, 0, segEndX, wallY, 12, "interior", { hideBottom: true, hideBack: true });
+        }
       }
 
       // 5. Upper Wall Cabinets

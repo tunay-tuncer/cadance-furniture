@@ -123,6 +123,7 @@ export interface FurnitureParams {
   hasCountertop?: boolean;    // optional countertop on base cabinets
   countertopThickness?: number; // mm (height / thickness of countertop, default 30mm)
   hasBacksplash?: boolean;    // optional wall cladding panel covering wall between base and top cabinets
+  backsplashHeight?: number;  // mm (height of cover wall / backsplash panel, default 600mm)
   apronHeight?: number; // mm (height/width of apron rail, default 65mm)
   hasBackPanel?: boolean;  // solid back panel or open back
   topOverhang?: number;    // mm (tabletop overhang beyond apron, can be 0)
@@ -945,27 +946,45 @@ export default function FurnitureMesh({
       }
       const standoffSpan = rodLen * 0.75;
       return (
-        <group position={[pos[0] + doorOffset, pos[1], pos[2] + 0.016]}>
+        <group>
+          {/* Detailed 3D WebGL Mesh (Hidden from 2D Drawings) */}
+          <group userData={{ drawingIgnore: true }} position={[pos[0] + doorOffset, pos[1], pos[2] + 0.016]}>
+            <mesh
+              material={specificHandleMat}
+              castShadow
+              rotation={isVertical ? [0, 0, 0] : [0, 0, Math.PI / 2]}
+            >
+              <cylinderGeometry args={[0.003, 0.003, rodLen, 12]} />
+            </mesh>
+            <mesh
+              position={isVertical ? [0, standoffSpan / 2, -0.008] : [standoffSpan / 2, 0, -0.008]}
+              rotation={[Math.PI / 2, 0, 0]}
+              material={specificHandleMat}
+            >
+              <cylinderGeometry args={[0.004, 0.004, 0.016, 12]} />
+            </mesh>
+            <mesh
+              position={isVertical ? [0, -standoffSpan / 2, -0.008] : [-standoffSpan / 2, 0, -0.008]}
+              rotation={[Math.PI / 2, 0, 0]}
+              material={specificHandleMat}
+            >
+              <cylinderGeometry args={[0.004, 0.004, 0.016, 12]} />
+            </mesh>
+          </group>
+
+          {/* Clean Simplified Architectural Proxy Box for 2D Drawings */}
           <mesh
-            material={specificHandleMat}
-            castShadow
-            rotation={isVertical ? [0, 0, 0] : [0, 0, Math.PI / 2]}
+            userData={{ isHandleDrawing: true }}
+            position={[pos[0] + doorOffset, pos[1], pos[2] + 0.010]}
           >
-            <cylinderGeometry args={[0.003, 0.003, rodLen, 12]} />
-          </mesh>
-          <mesh
-            position={isVertical ? [0, standoffSpan / 2, -0.008] : [standoffSpan / 2, 0, -0.008]}
-            rotation={[Math.PI / 2, 0, 0]}
-            material={specificHandleMat}
-          >
-            <cylinderGeometry args={[0.004, 0.004, 0.016, 12]} />
-          </mesh>
-          <mesh
-            position={isVertical ? [0, -standoffSpan / 2, -0.008] : [-standoffSpan / 2, 0, -0.008]}
-            rotation={[Math.PI / 2, 0, 0]}
-            material={specificHandleMat}
-          >
-            <cylinderGeometry args={[0.004, 0.004, 0.016, 12]} />
+            <boxGeometry
+              args={
+                isVertical
+                  ? [0.008, rodLen, 0.020]
+                  : [rodLen, 0.008, 0.020]
+              }
+            />
+            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
           </mesh>
         </group>
       );
@@ -976,10 +995,22 @@ export default function FurnitureMesh({
       const isRight = Boolean(context?.isRightDoor);
       const geom = isRight ? halfMoonGeometries.right : halfMoonGeometries.left;
       return (
-        <group position={[pos[0] + doorOffset, pos[1], pos[2] + 0.008]}>
-          <mesh geometry={geom} material={specificHandleMat} castShadow />
-          <mesh position={[isRight ? 0.015 : -0.015, 0, -0.004]} material={specificHandleMat}>
-            <boxGeometry args={[0.018, 0.040, 0.008]} />
+        <group>
+          {/* Detailed 3D WebGL Mesh */}
+          <group userData={{ drawingIgnore: true }} position={[pos[0] + doorOffset, pos[1], pos[2] + 0.008]}>
+            <mesh geometry={geom} material={specificHandleMat} castShadow />
+            <mesh position={[isRight ? 0.015 : -0.015, 0, -0.004]} material={specificHandleMat}>
+              <boxGeometry args={[0.018, 0.040, 0.008]} />
+            </mesh>
+          </group>
+
+          {/* Clean Simplified Architectural Proxy Box for 2D Drawings */}
+          <mesh
+            userData={{ isHandleDrawing: true }}
+            position={[pos[0] + doorOffset + (isRight ? 0.015 : -0.015), pos[1], pos[2] + 0.008]}
+          >
+            <boxGeometry args={[0.030, 0.070, 0.016]} />
+            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
           </mesh>
         </group>
       );
@@ -988,12 +1019,24 @@ export default function FurnitureMesh({
     // 3. Architectural T-Knob / Stepped Cone Dot ("knob")
     if (hType === "knob") {
       return (
-        <group position={[pos[0] + doorOffset, pos[1], pos[2]]}>
-          <mesh position={[0, 0, 0.009]} rotation={[Math.PI / 2, 0, 0]} material={specificHandleMat} castShadow>
-            <cylinderGeometry args={[0.004, 0.004, 0.018, 12]} />
-          </mesh>
-          <mesh position={[0, 0, 0.019]} rotation={[Math.PI / 2, 0, 0]} material={specificHandleMat} castShadow>
-            <cylinderGeometry args={[0.008, 0.008, 0.004, 16]} />
+        <group>
+          {/* Detailed 3D WebGL Mesh */}
+          <group userData={{ drawingIgnore: true }} position={[pos[0] + doorOffset, pos[1], pos[2]]}>
+            <mesh position={[0, 0, 0.009]} rotation={[Math.PI / 2, 0, 0]} material={specificHandleMat} castShadow>
+              <cylinderGeometry args={[0.004, 0.004, 0.018, 12]} />
+            </mesh>
+            <mesh position={[0, 0, 0.019]} rotation={[Math.PI / 2, 0, 0]} material={specificHandleMat} castShadow>
+              <cylinderGeometry args={[0.008, 0.008, 0.004, 16]} />
+            </mesh>
+          </group>
+
+          {/* Clean Simplified Architectural Proxy Box for 2D Drawings */}
+          <mesh
+            userData={{ isHandleDrawing: true }}
+            position={[pos[0] + doorOffset, pos[1], pos[2] + 0.010]}
+          >
+            <boxGeometry args={[0.016, 0.016, 0.020]} />
+            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
           </mesh>
         </group>
       );
@@ -1002,12 +1045,24 @@ export default function FurnitureMesh({
     // 4. Modern L-Shaped Finger Tab Lip ("edgePull")
     if (hType === "edgePull") {
       return (
-        <group position={[pos[0] + doorOffset, pos[1], pos[2] + 0.005]}>
-          <mesh position={[0, 0, 0]} material={specificHandleMat} castShadow>
-            <boxGeometry args={[0.08, 0.003, 0.018]} />
-          </mesh>
-          <mesh position={[0, -0.006, 0.009]} material={specificHandleMat} castShadow>
-            <boxGeometry args={[0.08, 0.012, 0.002]} />
+        <group>
+          {/* Detailed 3D WebGL Mesh */}
+          <group userData={{ drawingIgnore: true }} position={[pos[0] + doorOffset, pos[1], pos[2] + 0.005]}>
+            <mesh position={[0, 0, 0]} material={specificHandleMat} castShadow>
+              <boxGeometry args={[0.08, 0.003, 0.018]} />
+            </mesh>
+            <mesh position={[0, -0.006, 0.009]} material={specificHandleMat} castShadow>
+              <boxGeometry args={[0.08, 0.012, 0.002]} />
+            </mesh>
+          </group>
+
+          {/* Clean Simplified Architectural Proxy Box for 2D Drawings */}
+          <mesh
+            userData={{ isHandleDrawing: true }}
+            position={[pos[0] + doorOffset, pos[1] - 0.004, pos[2] + 0.008]}
+          >
+            <boxGeometry args={[0.08, 0.008, 0.016]} />
+            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
           </mesh>
         </group>
       );
@@ -1016,10 +1071,19 @@ export default function FurnitureMesh({
     // 5. Rounded Slot Cutout ("cutout")
     if (hType === "cutout") {
       return (
-        <group position={[pos[0] + doorOffset, pos[1], pos[2] + 0.002]}>
-          <mesh>
+        <group>
+          <group userData={{ drawingIgnore: true }} position={[pos[0] + doorOffset, pos[1], pos[2] + 0.002]}>
+            <mesh>
+              <boxGeometry args={[0.09, 0.024, 0.006]} />
+              <meshBasicMaterial color="#0e1017" />
+            </mesh>
+          </group>
+          <mesh
+            userData={{ isHandleDrawing: true }}
+            position={[pos[0] + doorOffset, pos[1], pos[2] + 0.002]}
+          >
             <boxGeometry args={[0.09, 0.024, 0.006]} />
-            <meshBasicMaterial color="#0e1017" />
+            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
           </mesh>
         </group>
       );
@@ -1029,35 +1093,53 @@ export default function FurnitureMesh({
     const barLen = 0.14;
     const barThick = 0.008;
     return (
-      <group position={[pos[0] + doorOffset, pos[1], pos[2] + 0.018]}>
-        <mesh material={specificHandleMat} castShadow>
+      <group>
+        {/* Detailed 3D WebGL Mesh */}
+        <group userData={{ drawingIgnore: true }} position={[pos[0] + doorOffset, pos[1], pos[2] + 0.018]}>
+          <mesh material={specificHandleMat} castShadow>
+            <boxGeometry
+              args={
+                isVertical
+                  ? [barThick, barLen, barThick]
+                  : [barLen, barThick, barThick]
+              }
+            />
+          </mesh>
+          <mesh
+            position={
+              isVertical ? [0, barLen * 0.35, -0.009] : [barLen * 0.35, 0, -0.009]
+            }
+            rotation={[Math.PI / 2, 0, 0]}
+            material={specificHandleMat}
+          >
+            <cylinderGeometry args={[0.0035, 0.0035, 0.018, 12]} />
+          </mesh>
+          <mesh
+            position={
+              isVertical
+                ? [0, -barLen * 0.35, -0.009]
+                : [-barLen * 0.35, 0, -0.009]
+            }
+            rotation={[Math.PI / 2, 0, 0]}
+            material={specificHandleMat}
+          >
+            <cylinderGeometry args={[0.0035, 0.0035, 0.018, 12]} />
+          </mesh>
+        </group>
+
+        {/* Clean Simplified Architectural Proxy Box for 2D Drawings */}
+        <mesh
+          userData={{ isHandleDrawing: true }}
+          position={[pos[0] + doorOffset, pos[1], pos[2] + 0.012]}
+        >
           <boxGeometry
             args={
               isVertical
-                ? [barThick, barLen, barThick]
-                : [barLen, barThick, barThick]
+                ? [barThick, barLen, 0.024]
+                : [barLen, barThick, 0.024]
             }
           />
-        </mesh>
-        <mesh
-          position={
-            isVertical ? [0, barLen * 0.35, -0.009] : [barLen * 0.35, 0, -0.009]
-          }
-          rotation={[Math.PI / 2, 0, 0]}
-          material={specificHandleMat}
-        >
-          <cylinderGeometry args={[0.0035, 0.0035, 0.018, 12]} />
-        </mesh>
-        <mesh
-          position={
-            isVertical
-              ? [0, -barLen * 0.35, -0.009]
-              : [-barLen * 0.35, 0, -0.009]
-          }
-          rotation={[Math.PI / 2, 0, 0]}
-          material={specificHandleMat}
-        >
-          <cylinderGeometry args={[0.0035, 0.0035, 0.018, 12]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
         </mesh>
       </group>
     );
@@ -1897,49 +1979,90 @@ export default function FurnitureMesh({
         {centeredBaseItems.length > 0 && params.hasBacksplash && (
           <group>
             {(() => {
-              const baseTopY = plinthH + maxBaseH + effectiveCtH;
-              const splashH = wallUnits.length > 0
-                ? (wallUnits[0].bottomOffset !== undefined ? wallUnits[0].bottomOffset : 600) / 1000
-                : 0.60;
-              const splashCenterY = baseTopY + splashH / 2;
+              const splashH = (params.backsplashHeight ?? (wallUnits.length > 0 && wallUnits[0].bottomOffset !== undefined ? wallUnits[0].bottomOffset : 600)) / 1000;
               const splashThick = 0.018;
-
-              // Run 0 span along X
-              const run0SpanW = (hasBaseCorner ? cornerOuterX : cursorX);
 
               return (
                 <group>
-                  {/* Run 0 Backsplash Panel */}
-                  <mesh
-                    position={[
-                      run0SpanW / 2 - centerOffX,
-                      splashCenterY,
-                      -D_STD / 2 - centerOffZ + splashThick / 2,
-                    ]}
-                    material={countertopMaterial}
-                    castShadow
-                    receiveShadow
-                  >
-                    <boxGeometry args={[run0SpanW, splashH, splashThick]} />
-                    <Edges threshold={15} color={edgeColor} />
-                  </mesh>
+                  {centeredBaseItems.map((item, bi) => {
+                    // Do NOT apply cover wall / backsplash to fridge modules, tall cabinets, or units without countertop
+                    if (item.unit.type === "tall" || item.unit.type === "fridge" || item.unit.hasNoCountertop) {
+                      return null;
+                    }
+                    const ctThick = (params.countertopThickness ?? tableTopThickness ?? 30) / 1000;
+                    const itemBaseTopY = plinthH + item.unit.height / 1000 + (hasCountertop ? ctThick : 0);
+                    const splashCenterY = itemBaseTopY + splashH / 2;
 
-                  {/* Run 1 Backsplash Panel (along Turned Wall if corner exists) */}
-                  {hasBaseCorner && (
-                    <mesh
-                      position={[
-                        cornerOuterX - centerOffX - splashThick / 2,
-                        splashCenterY,
-                        (-D_STD / 2 + cornerD / 2) - centerOffZ,
-                      ]}
-                      material={countertopMaterial}
-                      castShadow
-                      receiveShadow
-                    >
-                      <boxGeometry args={[splashThick, splashH, cornerD]} />
-                      <Edges threshold={15} color={edgeColor} />
-                    </mesh>
-                  )}
+                    if (item.isCorner) {
+                      const armD = (item.unit.cornerDepth || 600) / 1000;
+                      return (
+                        <group key={`splashCorner-${bi}`}>
+                          {/* Run 0 Arm Backsplash along rear wall */}
+                          <mesh
+                            position={[
+                              item.pos[0],
+                              splashCenterY,
+                              -D_STD / 2 - centerOffZ + splashThick / 2,
+                            ]}
+                            material={countertopMaterial}
+                            castShadow
+                            receiveShadow
+                          >
+                            <boxGeometry args={[item.uW, splashH, splashThick]} />
+                            <Edges threshold={15} color={edgeColor} />
+                          </mesh>
+                          {/* Turned Run 1 Arm Backsplash along turned wall */}
+                          <mesh
+                            position={[
+                              cornerOuterX - centerOffX - splashThick / 2,
+                              splashCenterY,
+                              item.pos[2] - item.uD / 2 + armD + (item.uD - armD) / 2,
+                            ]}
+                            material={countertopMaterial}
+                            castShadow
+                            receiveShadow
+                          >
+                            <boxGeometry args={[splashThick, splashH, item.uD - armD]} />
+                            <Edges threshold={15} color={edgeColor} />
+                          </mesh>
+                        </group>
+                      );
+                    } else if (item.runIndex === 0) {
+                      return (
+                        <mesh
+                          key={`splashRun0-${bi}`}
+                          position={[
+                            item.pos[0],
+                            splashCenterY,
+                            -D_STD / 2 - centerOffZ + splashThick / 2,
+                          ]}
+                          material={countertopMaterial}
+                          castShadow
+                          receiveShadow
+                        >
+                          <boxGeometry args={[item.uW, splashH, splashThick]} />
+                          <Edges threshold={15} color={edgeColor} />
+                        </mesh>
+                      );
+                    } else {
+                      return (
+                        <mesh
+                          key={`splashRun1-${bi}`}
+                          position={[
+                            cornerOuterX - centerOffX - splashThick / 2,
+                            splashCenterY,
+                            item.pos[2],
+                          ]}
+                          material={countertopMaterial}
+                          castShadow
+                          receiveShadow
+                        >
+                          <boxGeometry args={[splashThick, splashH, item.uW]} />
+                          <Edges threshold={15} color={edgeColor} />
+                        </mesh>
+                      );
+                    }
+                  })}
                 </group>
               );
             })()}
