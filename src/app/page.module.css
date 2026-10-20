@@ -1,10 +1,12 @@
 .container {
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 4rem);
+  min-height: 100vh;
+  min-height: 100dvh;
   width: 100%;
+  padding-top: 4rem;
   background: var(--bgDark);
-  background-image: 
+  background-image:
     radial-gradient(circle at 50% 20%, rgba(41, 114, 245, 0.16) 0%, transparent 65%),
     linear-gradient(to right, var(--gridWhite) 1px, transparent 1px),
     linear-gradient(to bottom, var(--gridWhite) 1px, transparent 1px);
@@ -16,7 +18,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6rem 1.5rem 3rem;
+  padding: 2rem 1.5rem;
 }
 
 .statusCard {
@@ -121,7 +123,7 @@
 
 @media (max-width: 640px) {
   .main {
-    padding: 5rem 1rem 2.5rem;
+    padding: 1.5rem 1rem 2rem;
   }
 
   .statusCard {

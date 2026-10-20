@@ -116,6 +116,11 @@ export default function ModelerControls({
   // Kitchen Modular Unit Management
   const kitchenUnits = params.kitchenUnits || [];
   const selectedUnit = kitchenUnits.find((u) => u.id === params.selectedUnitId) || kitchenUnits[0];
+  const selectedWallAnchor = selectedUnit?.mountedAboveUnitId
+    ? kitchenUnits.find((unit) => unit.id === selectedUnit.mountedAboveUnitId)
+    : undefined;
+  const showWallClearance = !selectedUnit?.mountedAboveUnitId || !selectedWallAnchor ||
+    selectedWallAnchor.type === "base" || selectedWallAnchor.type === "corner-base" || selectedWallAnchor.type === "dishwasher";
   const selectedUnitIds = params.selectedUnitIds && params.selectedUnitIds.length > 0
     ? params.selectedUnitIds
     : (selectedUnit ? [selectedUnit.id] : []);
@@ -147,12 +152,21 @@ export default function ModelerControls({
   ) => {
     const isCorner = type === "corner-base" || type === "corner-wall";
     const existingCount = kitchenUnits.filter((u) => u.type === type).length;
+    const wallAnchor = type === "wall"
+      ? (selectedUnit || kitchenUnits.find((unit) => unit.type === "base" || unit.type === "fridge" || unit.type === "tall"))
+      : undefined;
     let resolvedRunAxis: "run0" | "run1" | undefined = runAxis;
     if (type === "wall" && !resolvedRunAxis) {
       if (selectedUnit?.type === "wall" && selectedUnit.runAxis) {
         resolvedRunAxis = selectedUnit.runAxis;
+      } else if (wallAnchor) {
+        const cornerIndex = kitchenUnits.findIndex((unit) => unit.type === "corner-base");
+        const anchorIndex = kitchenUnits.findIndex((unit) => unit.id === wallAnchor.id);
+        resolvedRunAxis = cornerIndex !== -1 && anchorIndex > cornerIndex ? "run1" : "run0";
       }
     }
+    const isFridgeTop = wallAnchor?.type === "fridge";
+    const isSecondWallLayer = wallAnchor?.type === "wall" || wallAnchor?.type === "corner-wall";
 
     const newUnit: KitchenCabinetUnit = {
       id: `${type}-${Date.now()}`,
@@ -169,16 +183,21 @@ export default function ModelerControls({
           ? `Fridge Housing ${existingCount + 1}`
           : type === "dishwasher"
           ? `Dishwasher Unit ${existingCount + 1}`
+          : isFridgeTop
+          ? `Fridge Top Cabinet ${existingCount + 1}`
+          : isSecondWallLayer
+          ? `Second Wall Layer ${existingCount + 1}`
           : `Upper Wall Unit ${existingCount + 1}${resolvedRunAxis === "run1" ? " (Turned)" : ""}`,
       type,
       runAxis: type === "wall" ? (resolvedRunAxis || "run0") : undefined,
+      mountedAboveUnitId: type === "wall" ? wallAnchor?.id : undefined,
       orientation: isCorner ? "corner-right" : "straight",
       materialType: selectedUnit?.materialType || params.materialType,
-      width: type === "corner-base" ? 900 : type === "corner-wall" ? 600 : type === "fridge" ? 700 : 600,
-      height: type === "tall" ? 2100 : type === "fridge" ? 2000 : 720,
-      depth: type === "corner-base" ? 900 : type === "corner-wall" ? 600 : (type === "base" || type === "tall" || type === "dishwasher") ? 600 : type === "fridge" ? 650 : 350,
+      width: type === "corner-base" ? 900 : type === "corner-wall" ? 600 : type === "fridge" ? 700 : (type === "wall" && wallAnchor) ? wallAnchor.width : 600,
+      height: type === "tall" ? 2100 : type === "fridge" ? 2000 : isFridgeTop ? 420 : isSecondWallLayer ? 450 : 720,
+      depth: type === "corner-base" ? 900 : type === "corner-wall" ? 600 : (type === "base" || type === "tall" || type === "dishwasher") ? 600 : type === "fridge" ? 650 : isFridgeTop ? wallAnchor.depth : 350,
       cornerDepth: isCorner ? (type === "corner-wall" ? 350 : 600) : undefined,
-      bottomOffset: (type === "wall" || type === "corner-wall") ? 600 : undefined,
+      bottomOffset: (type === "wall" || type === "corner-wall") && !isFridgeTop && !isSecondWallLayer ? 600 : undefined,
       doorType: isCorner ? "cornerDouble" : (type === "tall" ? "double" : "singleLeft"),
       doorStyle: selectedUnit?.doorStyle || "slab",
       hasNoBottom: type === "fridge" || type === "dishwasher",
@@ -1386,14 +1405,14 @@ export default function ModelerControls({
                         value={selectedWardrobeUnit.width}
                         onChange={(val) => updateSelectedWardrobeUnit({ width: val })}
                         min={400}
-                        max={1400}
+                        max={2500}
                         unit="mm"
                       />
                     </div>
                     <input
                       type="range"
                       min={400}
-                      max={1400}
+                      max={2500}
                       step={20}
                       value={selectedWardrobeUnit.width}
                       onChange={(e) => updateSelectedWardrobeUnit({ width: Number(e.target.value) })}
@@ -1587,7 +1606,7 @@ export default function ModelerControls({
                           <button
                             key={axis.id}
                             type="button"
-                            onClick={() => updateSelectedUnit({ runAxis: axis.id as "run0" | "run1" })}
+                            onClick={() => updateSelectedUnit({ runAxis: axis.id as "run0" | "run1", mountedAboveUnitId: undefined })}
                             className={`${styles.segmentedBtn} ${
                               (selectedUnit.runAxis || "run0") === axis.id ? styles.segmentedBtnActive : ""
                             }`}
@@ -1597,6 +1616,42 @@ export default function ModelerControls({
                         ))}
                       </div>
                     </div>
+                  )}
+
+                  {selectedUnit.type === "wall" && (
+                    <div className={styles.controlGroup}>
+                      <label className={styles.groupLabel}>Mounted Above</label>
+                      <select
+                        value={selectedUnit.mountedAboveUnitId || ""}
+                        onChange={(e) => updateSelectedUnit({ mountedAboveUnitId: e.target.value || undefined })}
+                        style={{ width: "100%", padding: "0.45rem", background: "#111827", color: "#e2e8f0", border: "1px solid rgba(148,163,184,0.3)", borderRadius: "5px" }}
+                      >
+                        <option value="">Automatic wall layout</option>
+                        {kitchenUnits
+                          .slice(0, kitchenUnits.findIndex((unit) => unit.id === selectedUnit.id))
+                          .filter((unit) => unit.type !== "dishwasher")
+                          .map((unit) => (
+                            <option key={unit.id} value={unit.id}>
+                              {unit.name} ({unit.type === "wall" || unit.type === "corner-wall" ? "stack above" : "align above"})
+                            </option>
+                          ))}
+                      </select>
+                      <div style={{ fontSize: "0.7rem", color: "#94a3b8", marginTop: "3px" }}>
+                        Anchored units stay aligned when the lower cabinet changes size or position.
+                      </div>
+                    </div>
+                  )}
+
+                  {(selectedUnit.type === "fridge" || selectedUnit.type === "wall") && (
+                    <button
+                      type="button"
+                      onClick={() => addKitchenUnit("wall")}
+                      className={styles.unitAddBtn}
+                      style={{ borderColor: "rgba(56, 189, 248, 0.4)", color: "#38bdf8", marginTop: "0.5rem" }}
+                    >
+                      <MdAdd size={14} />
+                      <span>{selectedUnit.type === "fridge" ? "+ Add Fridge Top Cabinet" : "+ Add Second Wall Layer"}</span>
+                    </button>
                   )}
 
 
@@ -1705,7 +1760,7 @@ export default function ModelerControls({
                   )}
 
                   {/* Upper Wall Cabinet Distance From Bottom Cabinet Controller */}
-                  {(selectedUnit.type === "wall" || selectedUnit.type === "corner-wall") && (
+                  {(selectedUnit.type === "wall" || selectedUnit.type === "corner-wall") && showWallClearance && (
                     <div className={styles.sliderCard}>
                       <div className={styles.sliderHead}>
                         <span className={styles.sliderName}>Distance from Bottom Cabinet</span>
@@ -2038,7 +2093,7 @@ export default function ModelerControls({
 
           {openSections.geometry && (
             <div className={styles.accordionBody}>
-              {(params.category === "Cabinet" || params.category === "Wardrobe") && (
+              {(params.category === "Cabinet" || params.category === "Wardrobe" || params.category === "Shelf") && (
                 <>
                   <div className={styles.controlGroup}>
                     <label className={styles.groupLabel}>Toe Kick / Base Type</label>
@@ -2053,7 +2108,7 @@ export default function ModelerControls({
                           type="button"
                           onClick={() => updateParam("baseType", b.id as FurnitureParams["baseType"])}
                           className={`${styles.segmentedBtn} ${
-                            (params.baseType || "plinth") === b.id ? styles.segmentedBtnActive : ""
+                            (params.baseType || (params.category === "Cabinet" || params.category === "Wardrobe" ? "plinth" : "floating")) === b.id ? styles.segmentedBtnActive : ""
                           }`}
                         >
                           {b.label}
@@ -2090,19 +2145,19 @@ export default function ModelerControls({
                         <div className={styles.sliderHead}>
                           <span className={styles.sliderName}>Plinth Recess / Offset</span>
                           <CadNumberInput
-                            value={params.plinthRecess || 40}
+                            value={params.plinthRecess ?? (params.category === "Shelf" ? 30 : 40)}
                             onChange={(val) => updateParam("plinthRecess", val)}
-                            min={10}
-                            max={80}
+                            min={params.category === "Wardrobe" || params.category === "Shelf" ? 0 : 10}
+                            max={params.category === "Wardrobe" || params.category === "Shelf" ? 100 : 80}
                             unit="mm"
                           />
                         </div>
                         <input
                           type="range"
-                          min={10}
-                          max={80}
+                          min={params.category === "Wardrobe" || params.category === "Shelf" ? 0 : 10}
+                          max={params.category === "Wardrobe" || params.category === "Shelf" ? 100 : 80}
                           step={5}
-                          value={params.plinthRecess || 40}
+                          value={params.plinthRecess ?? (params.category === "Shelf" ? 30 : 40)}
                           onChange={(e) => updateParam("plinthRecess", Number(e.target.value))}
                           className={styles.rangeSlider}
                         />
@@ -2272,7 +2327,7 @@ export default function ModelerControls({
                           <button
                             key={d.id}
                             type="button"
-                            onClick={() => updateSelectedWardrobeUnit({ doorType: d.id as WardrobeUnit["doorType"] })}
+                            onClick={() => updateSelectedWardrobeUnit({ doorType: d.id as WardrobeUnit["doorType"], doorOpenPercent: 0 })}
                             className={`${styles.segmentedBtn} ${
                               selectedWardrobeUnit.doorType === d.id ? styles.segmentedBtnActive : ""
                             }`}
@@ -2368,7 +2423,7 @@ export default function ModelerControls({
                         </div>
                         <input
                           type="range"
-                          min={0}
+                          min={selectedWardrobeUnit.doorType === "sliding" ? -100 : 0}
                           max={100}
                           step={1}
                           value={selectedWardrobeUnit.doorOpenPercent || 0}

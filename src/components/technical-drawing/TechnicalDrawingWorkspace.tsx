@@ -283,7 +283,6 @@ export default function TechnicalDrawingWorkspace({
 
   const [projectedViews, setProjectedViews] = useState<ProjectedDrawingViews | null>(null);
   useEffect(() => {
-    setProjectedViews(null);
     if (!projectionEnabled) return;
 
     let frame = 0;

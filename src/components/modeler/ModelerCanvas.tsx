@@ -30,6 +30,7 @@ interface ModelerCanvasProps {
   onAddAdjacentWardrobeUnit?: (sourceId: string, direction: "left" | "right" | "top") => void;
   onAddDivision?: (unitId: string, type: "vertical" | "horizontal") => void;
   onSelectDivision?: (div: import("./FurnitureMesh").SelectedDivision | null) => void;
+  onSelectDivisions?: (divs: import("./FurnitureMesh").SelectedDivision[]) => void;
   onRemoveDivision?: (div: import("./FurnitureMesh").SelectedDivision) => void;
 }
 
@@ -40,10 +41,14 @@ const DEFAULT_TARGET: [number, number, number] = [0, 0.45, 0];
 function BoxSelectHandler({
   groupRef,
   onSelectUnits,
+  onSelectDivision,
+  onSelectDivisions,
   boxSelectorRef,
 }: {
   groupRef: React.RefObject<THREE.Group | null>;
   onSelectUnits?: (ids: string[]) => void;
+  onSelectDivision?: (div: import("./FurnitureMesh").SelectedDivision | null) => void;
+  onSelectDivisions?: (divs: import("./FurnitureMesh").SelectedDivision[]) => void;
   boxSelectorRef: React.MutableRefObject<((rect: [number, number, number, number]) => void) | null>;
 }) {
   const { camera, size } = useThree();
@@ -54,53 +59,74 @@ function BoxSelectHandler({
       if (!root) return;
       const matchedIds: string[] = [];
       const checkedUnits = new Set<string>();
+      const matchedDivisions: import("./FurnitureMesh").SelectedDivision[] = [];
+      const seenDivisions = new Set<string>();
+
+      const isInside = (obj: THREE.Object3D) => {
+        const bbox = new THREE.Box3().setFromObject(obj);
+        if (bbox.isEmpty()) return false;
+
+        const center = new THREE.Vector3();
+        bbox.getCenter(center);
+        const projCenter = center.clone().project(camera);
+        if (projCenter.z < 1) {
+          const sx = ((projCenter.x + 1) / 2) * size.width;
+          const sy = ((-projCenter.y + 1) / 2) * size.height;
+          if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) {
+            return true;
+          }
+        }
+
+        const corners = [
+          new THREE.Vector3(bbox.min.x, bbox.min.y, bbox.min.z),
+          new THREE.Vector3(bbox.max.x, bbox.max.y, bbox.min.z),
+          new THREE.Vector3(bbox.min.x, bbox.max.y, bbox.min.z),
+          new THREE.Vector3(bbox.max.x, bbox.min.y, bbox.min.z),
+          new THREE.Vector3(bbox.min.x, bbox.min.y, bbox.max.z),
+          new THREE.Vector3(bbox.max.x, bbox.max.y, bbox.max.z),
+        ];
+
+        for (const corner of corners) {
+          const proj = corner.project(camera);
+          if (proj.z < 1) {
+            const px = ((proj.x + 1) / 2) * size.width;
+            const py = ((-proj.y + 1) / 2) * size.height;
+            if (px >= minX && px <= maxX && py >= minY && py <= maxY) {
+              return true;
+            }
+          }
+        }
+        return false;
+      };
 
       root.traverse((obj) => {
+        // Check for division meshes first
+        const division = obj.userData?.division as import("./FurnitureMesh").SelectedDivision | undefined;
+        if (division) {
+          const key = `${division.unitId}-${division.type}-${division.index}-${division.colIndex ?? ""}`;
+          if (!seenDivisions.has(key)) {
+            seenDivisions.add(key);
+            if (isInside(obj)) {
+              matchedDivisions.push(division);
+              return;
+            }
+          }
+        }
+
+        // Check for unit items (cabinets, wardrobes)
         const unitId = obj.userData?.unitId;
         if (unitId && typeof unitId === "string" && !checkedUnits.has(unitId)) {
           checkedUnits.add(unitId);
-
-          const bbox = new THREE.Box3().setFromObject(obj);
-          if (!bbox.isEmpty()) {
-            // Check center
-            const center = new THREE.Vector3();
-            bbox.getCenter(center);
-            const projCenter = center.clone().project(camera);
-            if (projCenter.z < 1) {
-              const sx = ((projCenter.x + 1) / 2) * size.width;
-              const sy = ((-projCenter.y + 1) / 2) * size.height;
-              if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) {
-                matchedIds.push(unitId);
-                return;
-              }
-            }
-
-            // Check corner vertices of bounding box
-            const corners = [
-              new THREE.Vector3(bbox.min.x, bbox.min.y, bbox.min.z),
-              new THREE.Vector3(bbox.max.x, bbox.max.y, bbox.min.z),
-              new THREE.Vector3(bbox.min.x, bbox.max.y, bbox.min.z),
-              new THREE.Vector3(bbox.max.x, bbox.min.y, bbox.min.z),
-              new THREE.Vector3(bbox.min.x, bbox.min.y, bbox.max.z),
-              new THREE.Vector3(bbox.max.x, bbox.min.y, bbox.max.z),
-            ];
-
-            for (const corner of corners) {
-              const proj = corner.project(camera);
-              if (proj.z < 1) {
-                const px = ((proj.x + 1) / 2) * size.width;
-                const py = ((-proj.y + 1) / 2) * size.height;
-                if (px >= minX && px <= maxX && py >= minY && py <= maxY) {
-                  matchedIds.push(unitId);
-                  break;
-                }
-              }
-            }
+          if (isInside(obj)) {
+            matchedIds.push(unitId);
           }
         }
       });
 
-      if (matchedIds.length > 0) {
+      if (matchedDivisions.length > 0) {
+        onSelectDivision?.(matchedDivisions[0]);
+        onSelectDivisions?.(matchedDivisions);
+      } else if (matchedIds.length > 0) {
         onSelectUnits?.(matchedIds);
       }
     };
@@ -108,7 +134,7 @@ function BoxSelectHandler({
     return () => {
       boxSelectorRef.current = null;
     };
-  }, [camera, size, groupRef, onSelectUnits, boxSelectorRef]);
+  }, [camera, size, groupRef, onSelectUnits, onSelectDivision, onSelectDivisions, boxSelectorRef]);
 
   return null;
 }
@@ -234,9 +260,12 @@ export default function ModelerCanvas({
   onSelectWardrobeUnit,
   onAddAdjacentWardrobeUnit,
   onAddDivision,
-  onSelectDivision,
+  onSelectDivision: propOnSelectDivision,
+  onSelectDivisions: propOnSelectDivisions,
   onRemoveDivision,
 }: ModelerCanvasProps) {
+  const onSelectDivision = propOnSelectDivision || params.onSelectDivision;
+  const onSelectDivisions = propOnSelectDivisions || params.onSelectDivisions;
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const perspRef = useRef<THREE.PerspectiveCamera | null>(null);
   const orthoRef = useRef<THREE.OrthographicCamera | null>(null);
@@ -412,6 +441,7 @@ export default function ModelerCanvas({
               onAddAdjacentWardrobeUnit={onAddAdjacentWardrobeUnit}
               onAddDivision={onAddDivision}
               onSelectDivision={onSelectDivision}
+              onSelectDivisions={onSelectDivisions}
               onRemoveDivision={onRemoveDivision}
             />
           </group>
@@ -457,6 +487,8 @@ export default function ModelerCanvas({
           <BoxSelectHandler
             groupRef={groupRef}
             onSelectUnits={onSelectUnits}
+            onSelectDivision={onSelectDivision}
+            onSelectDivisions={onSelectDivisions}
             boxSelectorRef={boxSelectorRef}
           />
 

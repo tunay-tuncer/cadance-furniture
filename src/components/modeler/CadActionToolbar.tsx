@@ -139,17 +139,27 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
 
     const addWallCabinet = () => {
       const wallCount = kitchenUnits.filter((u) => u.type === "wall").length;
-      const baseRef = selectedUnit?.type === "base" ? selectedUnit : kitchenUnits.find((u) => u.type === "base");
-      const resolvedAxis = (selectedUnit?.type === "wall" ? selectedUnit.runAxis : undefined) || "run0";
+      const baseRef = selectedUnit || kitchenUnits.find((u) => u.type === "base" || u.type === "fridge");
+      const isFridgeTop = baseRef?.type === "fridge";
+      const isSecondLayer = baseRef?.type === "wall" || baseRef?.type === "corner-wall";
+      const anchorIndex = baseRef ? kitchenUnits.findIndex((unit) => unit.id === baseRef.id) : -1;
+      const cornerIndex = kitchenUnits.findIndex((unit) => unit.type === "corner-base");
+      const resolvedAxis = (selectedUnit?.type === "wall" ? selectedUnit.runAxis : undefined) ||
+        (cornerIndex !== -1 && anchorIndex > cornerIndex ? "run1" : "run0");
       const newUnit: KitchenCabinetUnit = {
         id: `wall-${Date.now()}`,
-        name: `Wall Cabinet ${wallCount + 1}${resolvedAxis === "run1" ? " (Turned)" : ""}`,
+        name: isFridgeTop
+          ? `Fridge Top Cabinet ${wallCount + 1}`
+          : isSecondLayer
+            ? `Second Wall Layer ${wallCount + 1}`
+            : `Wall Cabinet ${wallCount + 1}${resolvedAxis === "run1" ? " (Turned)" : ""}`,
         type: "wall",
         runAxis: resolvedAxis,
-        width: baseRef ? baseRef.width : 600,
-        height: 720,
-        depth: 350,
-        bottomOffset: 600,
+        mountedAboveUnitId: baseRef?.id,
+        width: baseRef?.width ?? 600,
+        height: isFridgeTop ? 420 : isSecondLayer ? 450 : 720,
+        depth: isFridgeTop ? baseRef.depth : 350,
+        bottomOffset: isFridgeTop || isSecondLayer ? undefined : 600,
         doorType: "double",
         drawerCount: 0,
         internalShelves: 2,
@@ -265,10 +275,10 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
             }
           }}
           className={`${styles.cadActionBtn} ${activeTool === "add-wall" ? styles.cadActionBtnActive : ""}`}
-          title="Add Upper Wall Cabinet: Snap above base or left/right of wall unit"
+          title={selectedUnit?.type === "fridge" ? "Add a matching cabinet above this fridge" : "Add a wall cabinet above the selected base or wall cabinet"}
         >
           <MdVerticalAlignTop size={15} color="#c084fc" />
-          <span>+ Wall Unit</span>
+          <span>{selectedUnit?.type === "fridge" ? "+ Fridge Top Cabinet" : selectedUnit?.type === "wall" ? "+ Second Wall Layer" : "+ Wall Unit"}</span>
         </button>
 
         <div className={styles.cadActionDivider} />
@@ -356,7 +366,7 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
     const toggleDoors = () => {
       if (!selectedUnit) return;
       const cur = selectedUnit.doorOpenPercent || 0;
-      const next = cur > 0 ? 0 : 80;
+      const next = Math.abs(cur) > 0 ? 0 : 80;
       const updated = wardrobeUnits.map((u) =>
         u.id === selectedUnit.id ? { ...u, doorOpenPercent: next } : u
       );
@@ -619,35 +629,77 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
           <span>Select Division</span>
         </button>
 
+        <button
+          type="button"
+          onClick={() => setTool("box-select")}
+          className={`${styles.cadActionBtn} ${activeTool === "box-select" ? styles.cadActionBtnActive : ""}`}
+          title="Box Select Divisions: Drag marquee in 3D viewport to select multiple shelf dividers or tiers"
+        >
+          <MdHighlightAlt size={15} color={activeTool === "box-select" ? "#38bdf8" : "#94a3b8"} />
+          <span>Box Select</span>
+        </button>
+
         <div className={styles.cadActionDivider} />
 
-        {/* Add Vertical Divider Column */}
-        <button
-          type="button"
-          onClick={() => {
-            const next = Math.min(5, cols + 1);
-            setParams((prev) => ({ ...prev, internalColumns: next }));
-          }}
-          className={styles.cadActionBtn}
-          title="Add Vertical Divider Column"
-        >
-          <MdVerticalSplit size={15} color="#38bdf8" />
-          <span>+ Divider ({cols})</span>
-        </button>
+        {/* Divider Controls: Add & Remove */}
+        <div style={{ display: "flex", gap: "4px" }}>
+          <button
+            type="button"
+            onClick={() => {
+              const next = Math.min(5, cols + 1);
+              setParams((prev) => ({ ...prev, internalColumns: next }));
+            }}
+            className={styles.cadActionBtn}
+            style={{ flex: 1, padding: "5px 6px" }}
+            title="Add Vertical Divider Column"
+          >
+            <MdVerticalSplit size={14} color="#38bdf8" />
+            <span>+ Divider ({cols})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const next = Math.max(1, cols - 1);
+              setParams((prev) => ({ ...prev, internalColumns: next, selectedDivision: null }));
+            }}
+            className={styles.cadActionBtn}
+            style={{ width: "32px", padding: "5px 0", justifyContent: "center" }}
+            title="Remove Vertical Divider Column"
+            disabled={cols <= 1}
+          >
+            <span style={{ fontSize: "14px", fontWeight: 700, color: cols <= 1 ? "#64748b" : "#ef4444" }}>-</span>
+          </button>
+        </div>
 
-        {/* Add Horizontal Shelf Tier */}
-        <button
-          type="button"
-          onClick={() => {
-            const next = Math.min(6, shelves + 1);
-            setParams((prev) => ({ ...prev, internalShelves: next }));
-          }}
-          className={styles.cadActionBtn}
-          title="Add Horizontal Shelf Tier"
-        >
-          <MdHorizontalSplit size={15} color="#34d399" />
-          <span>+ Shelf ({shelves})</span>
-        </button>
+        {/* Shelf Controls: Add & Remove */}
+        <div style={{ display: "flex", gap: "4px" }}>
+          <button
+            type="button"
+            onClick={() => {
+              const next = Math.min(6, shelves + 1);
+              setParams((prev) => ({ ...prev, internalShelves: next }));
+            }}
+            className={styles.cadActionBtn}
+            style={{ flex: 1, padding: "5px 6px" }}
+            title="Add Horizontal Shelf Tier"
+          >
+            <MdHorizontalSplit size={14} color="#34d399" />
+            <span>+ Shelf ({shelves})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const next = Math.max(0, shelves - 1);
+              setParams((prev) => ({ ...prev, internalShelves: next, selectedDivision: null }));
+            }}
+            className={styles.cadActionBtn}
+            style={{ width: "32px", padding: "5px 0", justifyContent: "center" }}
+            title="Remove Horizontal Shelf Tier"
+            disabled={shelves <= 0}
+          >
+            <span style={{ fontSize: "14px", fontWeight: 700, color: shelves <= 0 ? "#64748b" : "#ef4444" }}>-</span>
+          </button>
+        </div>
 
         {/* Back Panel Toggle */}
         <button
@@ -671,7 +723,11 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
                 <span style={{ fontSize: "10px", fontWeight: 700, color: "#fbbf24" }}>
                   {selectedDivision.type === "partition"
                     ? `DIVIDER ${(selectedDivision.index ?? 0) + 1}`
-                    : `SHELF ${(selectedDivision.index ?? 0) + 1}`}
+                    : `SHELF ${(selectedDivision.index ?? 0) + 1}${
+                        selectedDivision.colIndex !== undefined
+                          ? ` (Col ${selectedDivision.colIndex + 1})`
+                          : ""
+                      }`}
                 </span>
                 <CadNumberInput
                   value={

@@ -3,6 +3,8 @@ import {
   query,
   orderBy,
   onSnapshot,
+  getDoc,
+  updateDoc,
   addDoc,
   deleteDoc,
   doc,
@@ -101,6 +103,114 @@ export const addFurnitureToProject = async (
   return await addDoc(furnituresRef, {
     ...input,
     createdAt: serverTimestamp(),
+  });
+};
+
+export const getFurnitureItem = async (
+  userId: string,
+  projectId: string,
+  furnitureId: string
+): Promise<FurnitureItem | null> => {
+  if (!userId || !projectId || !furnitureId) return null;
+  const docRef = doc(
+    db,
+    "users",
+    userId,
+    "projects",
+    projectId,
+    "furnitures",
+    furnitureId
+  );
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) return null;
+  const data = snap.data();
+  return {
+    id: snap.id,
+    projectId: data.projectId || projectId,
+    name: data.name || "Untitled Furniture",
+    category: data.category || "Custom",
+    width: Number(data.width) || 1000,
+    depth: Number(data.depth) || 600,
+    height: Number(data.height) || 750,
+    material: data.material || "18mm Birch Plywood",
+    panelCount: Number(data.panelCount) || 6,
+    surfaceArea: Number(data.surfaceArea) || 1.8,
+    estimatedWeight: Number(data.estimatedWeight) || 15,
+    estimatedCost: Number(data.estimatedCost) || 0,
+    notes: data.notes || "",
+    params: data.params,
+    createdAt: data.createdAt,
+  };
+};
+
+export const subscribeToFurnitureItem = (
+  userId: string,
+  projectId: string,
+  furnitureId: string,
+  callback: (furniture: FurnitureItem | null) => void
+) => {
+  if (!userId || !projectId || !furnitureId) return () => {};
+  const docRef = doc(
+    db,
+    "users",
+    userId,
+    "projects",
+    projectId,
+    "furnitures",
+    furnitureId
+  );
+  return onSnapshot(
+    docRef,
+    (snap) => {
+      if (!snap.exists()) {
+        callback(null);
+        return;
+      }
+      const data = snap.data();
+      callback({
+        id: snap.id,
+        projectId: data.projectId || projectId,
+        name: data.name || "Untitled Furniture",
+        category: data.category || "Custom",
+        width: Number(data.width) || 1000,
+        depth: Number(data.depth) || 600,
+        height: Number(data.height) || 750,
+        material: data.material || "18mm Birch Plywood",
+        panelCount: Number(data.panelCount) || 6,
+        surfaceArea: Number(data.surfaceArea) || 1.8,
+        estimatedWeight: Number(data.estimatedWeight) || 15,
+        estimatedCost: Number(data.estimatedCost) || 0,
+        notes: data.notes || "",
+        params: data.params,
+        createdAt: data.createdAt,
+      });
+    },
+    (err) => {
+      console.error("Error subscribing to furniture item:", err);
+      callback(null);
+    }
+  );
+};
+
+export const updateFurnitureInProject = async (
+  userId: string,
+  projectId: string,
+  furnitureId: string,
+  updates: Partial<NewFurnitureInput>
+) => {
+  if (!userId || !projectId || !furnitureId) return;
+  const docRef = doc(
+    db,
+    "users",
+    userId,
+    "projects",
+    projectId,
+    "furnitures",
+    furnitureId
+  );
+  return await updateDoc(docRef, {
+    ...updates,
+    updatedAt: serverTimestamp(),
   });
 };
 

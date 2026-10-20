@@ -3,11 +3,15 @@
 import React, { useState, useRef, useEffect, useCallback, use } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import * as THREE from "three";
 import { useAuth } from "@/context/AuthContext";
 import { subscribeToUserProject, ProjectItem } from "@/lib/firebase/projectService";
-import { addFurnitureToProject } from "@/lib/firebase/furnitureService";
+import {
+  addFurnitureToProject,
+  updateFurnitureInProject,
+  subscribeToFurnitureItem,
+} from "@/lib/firebase/furnitureService";
 import { exportFurnitureModel, ExportFormat } from "@/lib/exporters/exportModel";
 import { FurnitureParams, KitchenCabinetUnit, WardrobeUnit, SelectedDivision } from "@/components/modeler/FurnitureMesh";
 import { calculateProductionMetrics } from "@/lib/production/productionCalculator";
@@ -109,8 +113,11 @@ interface PageProps {
 export default function ModelerPage({ params }: PageProps) {
   const { id: projectId } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const furnitureId = searchParams.get("furnitureId");
   const { user } = useAuth();
   const [project, setProject] = useState<ProjectItem | null>(null);
+  const [loadedFurnitureId, setLoadedFurnitureId] = useState<string | null>(null);
 
   const groupRef = useRef<THREE.Group | null>(null);
   const [modelReadyVersion, setModelReadyVersion] = useState(0);
@@ -171,8 +178,50 @@ export default function ModelerPage({ params }: PageProps) {
       setProject(proj);
     });
     
-  return () => unsub();
+    return () => unsub();
   }, [user?.uid, projectId]);
+
+  // Load existing furniture if opened from project detail with furnitureId
+  useEffect(() => {
+    if (!user?.uid || !projectId || !furnitureId) return;
+
+    const unsubFurn = subscribeToFurnitureItem(
+      user.uid,
+      projectId,
+      furnitureId,
+      (item) => {
+        if (!item) return;
+        setLoadedFurnitureId(item.id);
+        const resolvedCategory: FurnitureParams["category"] =
+          item.category === "Chair"
+            ? "Custom"
+            : (item.category as FurnitureParams["category"]) || "Custom";
+
+        if (item.params) {
+          setFurnitureParams({
+            ...item.params,
+            name: item.name || item.params.name,
+            category: item.params.category || resolvedCategory,
+            width: item.width || item.params.width,
+            height: item.height || item.params.height,
+            depth: item.depth || item.params.depth,
+          });
+        } else {
+          // Fallback if params wasn't previously serialized
+          setFurnitureParams((prev) => ({
+            ...prev,
+            name: item.name,
+            category: resolvedCategory,
+            width: item.width,
+            height: item.height,
+            depth: item.depth,
+          }));
+        }
+      }
+    );
+
+    return () => unsubFurn();
+  }, [user?.uid, projectId, furnitureId]);
 
   const handleSelectUnit = useCallback((id: string) => {
     setFurnitureParams((prev) => {
@@ -220,6 +269,15 @@ export default function ModelerPage({ params }: PageProps) {
     setFurnitureParams((prev) => ({
       ...prev,
       selectedDivision: div,
+      selectedDivisions: div ? [div] : [],
+    }));
+  };
+
+  const handleSelectDivisions = (divs: SelectedDivision[]) => {
+    setFurnitureParams((prev) => ({
+      ...prev,
+      selectedDivision: divs[0] || null,
+      selectedDivisions: divs,
     }));
   };
 
@@ -432,6 +490,7 @@ export default function ModelerPage({ params }: PageProps) {
             id: `corner-wall-${Date.now()}`,
             name: `Corner Wall (90°)`,
             type: "corner-wall",
+            mountedAboveUnitId: source.id,
             orientation: source.orientation || "corner-right",
             materialType: source.materialType || prev.materialType,
             width: 600,
@@ -466,14 +525,17 @@ export default function ModelerPage({ params }: PageProps) {
 
         const newWall: KitchenCabinetUnit = {
           id: `wall-${Date.now()}`,
-          name: `Wall Unit (${source.width}mm)${isOnRun1 ? " (Turned)" : ""}`,
+          name: source.type === "fridge"
+            ? `Fridge Top Cabinet (${source.width}mm)`
+            : `Wall Unit (${source.width}mm)${isOnRun1 ? " (Turned)" : ""}`,
           type: "wall",
           runAxis: isOnRun1 ? "run1" : "run0",
+          mountedAboveUnitId: source.id,
           materialType: source.materialType || prev.materialType,
           width: source.width,
-          height: 720,
-          depth: 350,
-          bottomOffset: 600,
+          height: source.type === "fridge" ? 420 : source.type === "wall" ? 450 : 720,
+          depth: source.type === "fridge" ? source.depth : 350,
+          bottomOffset: source.type === "fridge" || source.type === "wall" ? undefined : 600,
           doorType: source.width >= 800 ? "double" : "singleLeft",
           drawerCount: 0,
           internalShelves: 2,
@@ -613,8 +675,9 @@ export default function ModelerPage({ params }: PageProps) {
 
     try {
       const metrics = calculateProductionMetrics(furnitureParams);
+      const targetFurnitureId = loadedFurnitureId || furnitureId;
 
-      await addFurnitureToProject(user.uid, projectId, {
+      const payload = {
         projectId,
         name: furnitureParams.name || "Untitled Furniture",
         category: furnitureParams.category,
@@ -627,7 +690,13 @@ export default function ModelerPage({ params }: PageProps) {
         estimatedWeight: metrics.estimatedWeight,
         estimatedCost: 0,
         params: furnitureParams,
-      });
+      };
+
+      if (targetFurnitureId) {
+        await updateFurnitureInProject(user.uid, projectId, targetFurnitureId, payload);
+      } else {
+        await addFurnitureToProject(user.uid, projectId, payload);
+      }
 
       setSaveSuccess(true);
       setTimeout(() => {
@@ -651,6 +720,18 @@ export default function ModelerPage({ params }: PageProps) {
           </Link>
           {project?.name && (
             <span className={styles.projectBadge}>{project.name}</span>
+          )}
+          {furnitureParams.name && (
+            <span
+              className={styles.projectBadge}
+              style={{
+                background: "rgba(41, 114, 245, 0.15)",
+                borderColor: "rgba(41, 114, 245, 0.35)",
+                color: "#60a5fa",
+              }}
+            >
+              {furnitureParams.name}
+            </span>
           )}
 
           {/* Top Workspace Mode Switcher (3D Modeler vs 2D Technical Drawing) */}
@@ -751,6 +832,7 @@ export default function ModelerPage({ params }: PageProps) {
               onAddAdjacentWardrobeUnit={handleAddAdjacentWardrobeUnit}
               onAddDivision={handleAddDivision}
               onSelectDivision={handleSelectDivision}
+              onSelectDivisions={handleSelectDivisions}
               onRemoveDivision={handleRemoveDivision}
             />
         </div>

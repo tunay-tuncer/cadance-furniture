@@ -30,7 +30,9 @@ function isDrawingMesh(mesh: THREE.Mesh): boolean {
 }
 
 function isOpaqueModelMesh(mesh: THREE.Mesh): boolean {
-  if (mesh.userData?.isHandleDrawing === true) return true;
+  // Handle proxies exist only to draw simplified 2D hardware. They are
+  // intentionally transparent and must never hide real cabinet surfaces.
+  if (mesh.userData?.isHandleDrawing === true) return false;
   if (isIgnoredDrawingMesh(mesh)) return false;
   const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
   return materials.some(
@@ -267,6 +269,9 @@ export function projectFurnitureMeshes(
         const startSample = fragmentStart;
         fragmentStart = null;
         if (endSample <= startSample) return;
+        // Depth clipping can leave isolated sub-pixel slivers along face seams.
+        // Omitting those keeps visible edges continuous instead of dotted.
+        if (((endSample - startSample) / samples) * pixelLength < 1.25) return;
         const startRatio = startSample / samples;
         const endRatio = endSample / samples;
         const x1 = a.u + (b.u - a.u) * startRatio - minU;
@@ -281,6 +286,7 @@ export function projectFurnitureMeshes(
         }
       };
 
+      let lastVisibleSample: number | null = null;
       for (let sample = 0; sample <= samples; sample++) {
         const ratio = sample / samples;
         const u = a.u + (b.u - a.u) * ratio;
@@ -288,10 +294,22 @@ export function projectFurnitureMeshes(
         const nearestDepth = nearestDepthAt(u, v);
         const edgeDepth = a.depth + (b.depth - a.depth) * ratio;
         const visible = !Number.isFinite(nearestDepth) || edgeDepth >= nearestDepth - depthTolerance;
-        if (visible && fragmentStart === null) fragmentStart = sample;
-        if (!visible) finishFragment(sample - 1);
+        if (visible) {
+          if (fragmentStart === null) fragmentStart = sample;
+          lastVisibleSample = sample;
+        } else if (
+          fragmentStart !== null &&
+          lastVisibleSample !== null &&
+          sample - lastVisibleSample > 1
+        ) {
+          // Bridge a single missed sample caused by floating-point edge
+          // precision; longer occluded spans remain completely hidden.
+          finishFragment(lastVisibleSample);
+          fragmentStart = null;
+          lastVisibleSample = null;
+        }
       }
-      finishFragment(samples);
+      if (lastVisibleSample !== null) finishFragment(lastVisibleSample);
     }
 
     const dimensions: DimensionLineData[] = [];

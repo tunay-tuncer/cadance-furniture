@@ -394,3 +394,328 @@
     padding: 1.25rem;
   }
 }
+
+/* Unit Prices Settings Button */
+.settingsBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1.15rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--textMain);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.settingsBtn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+/* Cost & Pricing Section in Furniture Card */
+.cardCostBox {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.85rem 1rem;
+  background: rgba(41, 114, 245, 0.06);
+  border: 1px solid rgba(41, 114, 245, 0.18);
+  border-radius: var(--radiusSm);
+}
+
+.costRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.costLabel {
+  font-size: 0.73rem;
+  color: var(--textMuted);
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.netCostVal {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #94a3b8;
+}
+
+.customerPriceVal {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: #38bdf8;
+  text-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+}
+
+/* BOM Details Accordion Button */
+.bomToggleBtn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: var(--textNav);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.bomToggleBtn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--textWhite);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.bomContent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.85rem;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  font-size: 0.74rem;
+}
+
+.bomTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.bomTable th {
+  text-align: left;
+  padding: 0.35rem 0.25rem;
+  color: var(--textMuted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.bomTable td {
+  padding: 0.35rem 0.25rem;
+  color: var(--textMain);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.bomTable tr:last-child td {
+  border-bottom: none;
+}
+
+.bomTable td:last-child,
+.bomTable th:last-child {
+  text-align: right;
+}
+
+.bomTable strong {
+  color: #ffffff;
+}
+
+/* Modal Backdrop & Container */
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.modalCard {
+  background: #121217;
+  border: 1px solid var(--borderCard);
+  border-radius: var(--radiusCard);
+  max-width: 680px;
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.85);
+  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.modalHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--borderSubtle);
+}
+
+.modalTitle {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--textWhite);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.closeBtn {
+  background: transparent;
+  border: none;
+  color: var(--textMuted);
+  cursor: pointer;
+  padding: 0.4rem;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.closeBtn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--textWhite);
+}
+
+.modalBody {
+  padding: 1.5rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.settingsSection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.settingsSectionTitle {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #60a5fa;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.85rem;
+}
+
+@media (max-width: 580px) {
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.formField {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.formLabel {
+  font-size: 0.74rem;
+  color: var(--textNav);
+  font-weight: 500;
+}
+
+.inputGroup {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.inputGroup input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 0.55rem 0.75rem;
+  padding-right: 2.75rem;
+  color: var(--textWhite);
+  font-size: 0.85rem;
+  font-weight: 600;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.inputGroup input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(41, 114, 245, 0.25);
+}
+
+.inputUnit {
+  position: absolute;
+  right: 0.65rem;
+  font-size: 0.72rem;
+  color: var(--textMuted);
+  pointer-events: none;
+  font-weight: 600;
+}
+
+.modalFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.1rem 1.5rem;
+  border-top: 1px solid var(--borderSubtle);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.resetBtn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--textMuted);
+  padding: 0.55rem 1rem;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.resetBtn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--textWhite);
+}
+
+.saveSettingsBtn {
+  background: var(--accent);
+  border: none;
+  color: #ffffff;
+  padding: 0.55rem 1.4rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.saveSettingsBtn:hover {
+  background: var(--accent-hover);
+}

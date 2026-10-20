@@ -1,5 +1,78 @@
 import { FurnitureParams, KitchenCabinetUnit, WardrobeUnit } from "@/components/modeler/FurnitureMesh";
 
+export interface UnitPrices {
+  // Plakalar (TL / tam plaka)
+  sheet18White: number;       // 18mm Beyaz Plaka: 3850 TL
+  sheet18ColorWood: number;   // 18mm Renkli / Ahşap Desenli: 4750 TL
+  sheet18Plywood: number;     // 18mm Huş Plywood: 6500 TL
+  sheet8White: number;        // 8mm Beyaz Arkalık: 2650 TL
+  sheet8Color: number;        // 8mm Renkli Arkalık: 3100 TL
+
+  // Kesim & CNC (TL / plaka)
+  cuttingCnc18: number;       // Ebatlama + CNC (18mm): 2250 TL/plaka
+  cuttingCnc8: number;        // Ebatlama (8mm): 700 TL/plaka
+
+  // Kenar Bandı (TL / metre)
+  edgeBandingPerMeter: number; // 1mm PVC (Çekim dahil): 48 TL/mt
+
+  // Aksesuar & Donanım (TL / adet)
+  hingeSoftClose: number;     // Frenli Menteşe: 85 TL/adet
+  slideTandem: number;        // Tandem Gizli Frenli Ray: 750 TL/takım
+  handle: number;             // Mobilya Kulpu: 180 TL/adet
+  leg: number;                // Baza Ayak / Metal Ayak: 40 TL/adet
+  hangerRod: number;          // Askı Borusu + Rozet: 450 TL/takım
+
+  // İşçilik, Nakliye & Montaj
+  workshopAssemblyPerSheet: number; // Atölye Toplama İşçiliği (Minifikssiz kavela+tutkal pres): 2000 TL/plaka
+  siteInstallationPercent: number;  // Şantiye Montaj İşçiliği: %10
+  shippingFeeTL: number;            // Sabit Proje Nakliye Hizmeti (Proje başına tek sefer): 3000 TL
+  profitMarginPercent: number;      // Kâr Marjı: %35
+}
+
+export const DEFAULT_UNIT_PRICES: UnitPrices = {
+  sheet18White: 3850,
+  sheet18ColorWood: 4750,
+  sheet18Plywood: 6500,
+  sheet8White: 2650,
+  sheet8Color: 3100,
+  cuttingCnc18: 2250,
+  cuttingCnc8: 700,
+  edgeBandingPerMeter: 48,
+  hingeSoftClose: 85,
+  slideTandem: 750,
+  handle: 180,
+  leg: 40,
+  hangerRod: 450,
+  workshopAssemblyPerSheet: 2000,
+  siteInstallationPercent: 10,
+  shippingFeeTL: 3000,
+  profitMarginPercent: 35,
+};
+
+export interface HardwareBreakdown {
+  hinges: number;     // frenli menteşe
+  slides: number;     // tandem ray takımı
+  handles: number;    // kulp
+  legs: number;       // baza/gövde ayağı
+  hangerRods: number; // gardırop askı borusu
+}
+
+export interface CostBreakdown {
+  material18Cost: number;     // 18mm plaka maliyeti (tam plaka fireli)
+  material8Cost: number;      // 8mm arkalık maliyeti (tam plaka fireli)
+  totalMaterialCost: number;  // 18mm + 8mm
+  cuttingCncCost: number;     // Ebatlama + CNC maliyeti
+  edgeBandingCost: number;    // PVC bant + çekim maliyeti
+  hardwareCost: number;       // Aksesuar ve donanım maliyeti
+  workshopLaborCost: number;  // Atölye pres toplama işçiliği
+  baseProductionCost: number; // Malzeme + Kesim + Bant + Donanım + Atölye
+  siteInstallationCost: number;// Şantiye montaj işçiliği (%10)
+  shippingCost: number;       // Nakliye bedeli (proje bazında veya mobilya payı)
+  totalNetCost: number;       // Net Üretim Maliyeti (Kârsız)
+  profitAmount: number;       // Kâr tutarı (%35)
+  customerPrice: number;      // Müşteri Teklif / Satış Fiyatı (Kâr dahil)
+}
+
 export interface ProductionMetrics {
   panelCount: number; // 18mm structural panels, shelves, doors, drawer parts
   backPanelCount: number; // 8mm back panels (arkalık)
@@ -7,18 +80,44 @@ export interface ProductionMetrics {
   surfaceArea18mm: number; // in m² (18mm carcass, shelves, doors, drawers)
   surfaceArea8mm: number; // in m² (8mm back panels)
   totalSurfaceArea: number; // in m²
-  stdSheets: number; // Raw sheet / plaka count with 15% kerf
+  stdSheets: number; // 18mm tam plaka adedi (Math.ceil ile)
+  stdSheets8mm: number; // 8mm arkalık tam plaka adedi
   sheetArea: number; // 5.88 m² or 2.98 m²
   sheetLabel: string; // "2800×2100mm MDF-Lam Plaka" vs "2440×1220mm Plywood Sheet"
   isPlywood: boolean;
   estimatedWeight: number; // in kg
+  edgeBandingMeters: number; // 1mm PVC kenar bandı metrajı
+  hardware: HardwareBreakdown; // Donanım adetleri
+  cost: CostBreakdown; // Canlı maliyet ve fiyat kırılımı
 }
 
-export function calculateProductionMetrics(params: FurnitureParams): ProductionMetrics {
+export interface CalculationOptions {
+  includeShippingInItem?: boolean; // Mobilya bazında nakliye dahil edilsin mi? (varsayılan false, proje düzeyinde 1 kez eklenir)
+  shippingShare?: number;          // Mobilyaya düşen özel nakliye payı (TL)
+}
+
+export function calculateProductionMetrics(
+  params: FurnitureParams,
+  customPrices?: Partial<UnitPrices>,
+  options?: CalculationOptions
+): ProductionMetrics {
+  const prices: UnitPrices = {
+    ...DEFAULT_UNIT_PRICES,
+    ...(customPrices || {}),
+  };
+
   let panelCount = 0;
   let backPanelCount = 0;
   let area18 = 0;
   let area8 = 0;
+  let edgeBandingMeters = 0; // 1mm PVC edge banding in meters
+
+  // Hardware counters
+  let hinges = 0;
+  let slides = 0;
+  let handles = 0;
+  let legs = 0;
+  let hangerRods = 0;
 
   const t = (params.boardThickness || 18) / 1000;
 
@@ -49,42 +148,65 @@ export function calculateProductionMetrics(params: FurnitureParams): ProductionM
       const ud = (u.depth || (isWall ? 350 : 600)) / 1000;
 
       // 1. Side Gables (2 gables running full height)
+      // Front edge banded (2 * uh), top & bottom usually banded on carcass (2 * ud)
       panelCount += 2;
       area18 += 2 * (uh * ud);
+      edgeBandingMeters += 2 * (uh + ud);
 
-      // 2. Bottom Panel (sitting between gables)
+      // 2. Bottom Panel (front edge banded)
       panelCount += 1;
-      area18 += Math.max(0, uw - 2 * t) * ud;
+      const innerW = Math.max(0, uw - 2 * t);
+      area18 += innerW * ud;
+      edgeBandingMeters += innerW;
 
       // 3. Top Panel vs. 2x Top Stretchers (Üst Kayıt)
       if (u.type === "base" || u.type === "corner-base") {
-        // Base units use two 80mm deep stretchers front & back
         panelCount += 2;
-        area18 += 2 * Math.max(0, uw - 2 * t) * 0.08;
+        area18 += 2 * innerW * 0.08;
+        edgeBandingMeters += 2 * innerW; // front edge of stretchers
       } else {
-        // Wall units have a full solid top panel
         panelCount += 1;
-        area18 += Math.max(0, uw - 2 * t) * ud;
+        area18 += innerW * ud;
+        edgeBandingMeters += innerW; // front edge
       }
 
-      // 4. Internal Shelves
+      // 4. Internal Shelves (front edge banded)
       const shelves = u.internalShelves || 0;
       if (shelves > 0) {
         panelCount += shelves;
-        area18 += shelves * (Math.max(0, uw - 2 * t) * Math.max(0, ud - 0.045));
+        const shelfD = Math.max(0, ud - 0.045);
+        area18 += shelves * (innerW * shelfD);
+        edgeBandingMeters += shelves * innerW;
       }
 
-      // 5. Doors (Full Overlay: uh - 4mm)
+      // 5. Doors (Full perimeter banded: 2 * (w + h))
       const doorH = Math.max(0, uh - 0.004);
-      if (u.doorType === "double" || u.doorType === "cornerDouble") {
+      const isCornerDouble = u.doorType === "cornerDouble";
+      const isDouble = u.doorType === "double" || isCornerDouble;
+      const isSingle = u.doorType === "singleLeft" || u.doorType === "singleRight" || u.doorType === "flipUp";
+
+      if (isDouble) {
         panelCount += 2;
-        area18 += 2 * ((uw / 2 - 0.004) * doorH);
-      } else if (u.doorType === "singleLeft" || u.doorType === "singleRight" || u.doorType === "flipUp") {
+        const singleDoorW = uw / 2 - 0.004;
+        area18 += 2 * (singleDoorW * doorH);
+        edgeBandingMeters += 2 * (2 * (singleDoorW + doorH));
+
+        // Hinges: 2 hinges per door minimum, 3 if doorH > 1.2m
+        const hingesPerDoor = doorH > 1.2 ? 3 : 2;
+        hinges += 2 * hingesPerDoor;
+        handles += 2;
+      } else if (isSingle) {
         panelCount += 1;
-        area18 += (uw - 0.004) * doorH;
+        const singleDoorW = uw - 0.004;
+        area18 += singleDoorW * doorH;
+        edgeBandingMeters += 2 * (singleDoorW + doorH);
+
+        const hingesPerDoor = doorH > 1.2 ? 3 : 2;
+        hinges += hingesPerDoor;
+        handles += 1;
       }
 
-      // 6. Drawers (5 panels each: front + back + 2 sides + bottom)
+      // 6. Drawers (Front 4 edges banded, box panels front edge banded)
       const drawerCount = u.drawerCount || 0;
       if (drawerCount > 0) {
         panelCount += drawerCount * 5;
@@ -92,11 +214,21 @@ export function calculateProductionMetrics(params: FurnitureParams): ProductionM
         const boxH = Math.max(0.1, dh - 0.06);
         const boxW = Math.max(0.1, uw - 2 * t - 0.026);
         const boxD = Math.max(0.2, ud - 0.05);
-        // Front overlay + drawer box body (18mm front + 18mm/16mm sides, back, bottom)
+
         area18 += drawerCount * (uw * (dh - 0.006) + 2 * (boxD * boxH) + 2 * (boxW * boxH) + boxW * boxD);
+        // Drawer front perimeter + box top edges
+        edgeBandingMeters += drawerCount * (2 * (uw + dh) + 2 * boxD + 2 * boxW);
+
+        slides += drawerCount;
+        handles += drawerCount;
       }
 
-      // 7. Back Panel (Arkalık: 8mm MDF-Lam)
+      // 7. Legs (Base cabinets use 4 legs per unit)
+      if (u.type === "base" || u.type === "corner-base") {
+        legs += 4;
+      }
+
+      // 8. Back Panel (Arkalık: 8mm MDF-Lam)
       if (u.hasBackPanel !== false) {
         backPanelCount += 1;
         area8 += Math.max(0, uw - 2 * t + 0.016) * Math.max(0, uh - 2 * t + 0.016);
@@ -126,53 +258,88 @@ export function calculateProductionMetrics(params: FurnitureParams): ProductionM
       const uh = u.height / 1000;
       const ud = (u.depth || 600) / 1000;
 
-      // 1. Side Gables (2 gables running full height)
+      // 1. Side Gables (full perimeter front + bottom)
       panelCount += 2;
       area18 += 2 * (uh * ud);
+      edgeBandingMeters += 2 * (uh + ud);
 
-      // 2. Bottom Panel (sitting between gables)
+      // 2. Bottom Panel
       panelCount += 1;
-      area18 += Math.max(0, uw - 2 * t) * ud;
+      const innerW = Math.max(0, uw - 2 * t);
+      area18 += innerW * ud;
+      edgeBandingMeters += innerW;
 
-      // 3. Top Panel (sitting between gables)
+      // 3. Top Panel
       panelCount += 1;
-      area18 += Math.max(0, uw - 2 * t) * ud;
+      area18 += innerW * ud;
+      edgeBandingMeters += innerW;
 
       // 4. Center Vertical Partition
       if (u.hasInternalDivider) {
         panelCount += 1;
-        area18 += Math.max(0, uh - 2 * t) * Math.max(0, ud - 0.02);
+        const partH = Math.max(0, uh - 2 * t);
+        area18 += partH * Math.max(0, ud - 0.02);
+        edgeBandingMeters += partH;
       }
 
       // 5. Internal Shelves
       const shelves = u.internalShelves || 0;
       if (shelves > 0) {
         panelCount += shelves;
-        const shelfW = u.hasInternalDivider ? (uw - 3 * t) / 2 : uw - 2 * t;
+        const shelfW = u.hasInternalDivider ? (uw - 3 * t) / 2 : innerW;
         area18 += shelves * (Math.max(0, shelfW) * Math.max(0, ud - 0.045));
+        edgeBandingMeters += shelves * Math.max(0, shelfW);
       }
 
       // 6. Doors
       const doorH = Math.max(0, uh - 0.004);
       if (u.doorType === "hingedDouble" || u.doorType === "sliding") {
         panelCount += 2;
-        area18 += 2 * ((uw / 2 - 0.004) * doorH);
+        const singleW = uw / 2 - 0.004;
+        area18 += 2 * (singleW * doorH);
+        edgeBandingMeters += 2 * (2 * (singleW + doorH));
+
+        if (u.doorType === "hingedDouble") {
+          // Standard tall wardrobe hinged door has 4-5 hinges
+          const hingesPerDoor = doorH > 1.8 ? 5 : 4;
+          hinges += 2 * hingesPerDoor;
+        }
+        handles += 2;
       } else if (u.doorType === "hingedSingle") {
         panelCount += 1;
-        area18 += (uw - 0.004) * doorH;
+        const singleW = uw - 0.004;
+        area18 += singleW * doorH;
+        edgeBandingMeters += 2 * (singleW + doorH);
+
+        const hingesPerDoor = doorH > 1.8 ? 5 : 4;
+        hinges += hingesPerDoor;
+        handles += 1;
       }
 
-      // 7. Drawers (5 panels each)
+      // 7. Drawers
       if (u.hasDrawers && (u.drawerCount || 0) > 0) {
         const dCount = u.drawerCount || 2;
         panelCount += dCount * 5;
         const dH = (u.drawerHeight || 200) / 1000;
         const boxW = Math.max(0.2, uw - 2 * t - 0.03);
         const boxD = Math.max(0.2, ud - 0.05);
+
         area18 += dCount * (uw * dH + 2 * (boxD * dH) + 2 * (boxW * dH) + boxW * boxD);
+        edgeBandingMeters += dCount * (2 * (uw + dH) + 2 * boxD + 2 * boxW);
+
+        slides += dCount;
+        handles += dCount;
       }
 
-      // 8. Back Panel (Arkalık: 8mm MDF-Lam)
+      // 8. Clothes Hanger Rod
+      if (u.hasClothesHangerRail !== false) {
+        hangerRods += 1;
+      }
+
+      // 9. Base legs
+      legs += 4;
+
+      // 10. Back Panel (8mm MDF-Lam)
       backPanelCount += 1;
       area8 += Math.max(0, uw - 2 * t + 0.016) * Math.max(0, uh - 2 * t + 0.016);
     });
@@ -185,6 +352,9 @@ export function calculateProductionMetrics(params: FurnitureParams): ProductionM
 
     panelCount = 4 + (cols - 1) + cols * shelves;
     area18 = wM * dM * 2 + dM * hM * (2 + cols - 1) + cols * shelves * ((wM / cols) * dM);
+    // Shelf front edges + gable front edges
+    edgeBandingMeters = 2 * wM + (2 + cols - 1) * hM + cols * shelves * (wM / cols);
+    legs += 4;
 
     if (params.hasBackPanel) {
       backPanelCount = 1;
@@ -202,6 +372,14 @@ export function calculateProductionMetrics(params: FurnitureParams): ProductionM
 
     panelCount = 1 + legPanels + 4 + drawerP + pedPanels;
     area18 = wM * dM * 2 + (wM + dM) * 0.12 * 2 + legPanels * (0.05 * hM * 4) + (isPedestal ? 0.9 : 0);
+    edgeBandingMeters = 2 * (wM + dM) * 1.5;
+
+    if (params.hasDrawers) {
+      const dCount = params.drawerCount || 1;
+      slides += dCount;
+      handles += dCount;
+    }
+    legs += 4;
   }
 
   // 15% cutting kerf & trim factor
@@ -213,11 +391,13 @@ export function calculateProductionMetrics(params: FurnitureParams): ProductionM
   // Plywood: 2440 x 1220 mm = 2.9768 m²
   // MDF-Lam (Turkish Standard Jumbo): 2800 x 2100 mm = 5.88 m²
   const sheetArea = isPlywood ? 2.98 : 5.88;
-  const sheetLabel = isPlywood ? "2440×1220mm Plywood Sheet" : "2800×2100mm MDF-Lam Plaka";
+  const sheetLabel = isPlywood ? "2440×1220mm Huş Plywood" : "2800×2100mm MDF-Lam Plaka";
+
+  // Tam plaka hesabı - kalan fire bizden (Math.ceil)
   const stdSheets = Math.max(1, Math.ceil((netArea18 * kerfFactor) / sheetArea));
+  const stdSheets8mm = area8 > 0 ? Math.max(1, Math.ceil((area8 * kerfFactor) / 5.88)) : 0;
 
   // Density calculation
-  // Steel: 7800, MDF-Lam (Turkish standard): 720 kg/m³, Plywood: 680 kg/m³
   const density =
     params.materialType === "blackSteel"
       ? 7800
@@ -231,6 +411,97 @@ export function calculateProductionMetrics(params: FurnitureParams): ProductionM
   const weight8 = area8 * 0.008 * density;
   const estimatedWeight = Number((weight18 + weight8).toFixed(1));
 
+  // --- MALİYET VE FİYATLANDIRMA HESAPLARI (TÜRKİYE ÜRETİM STANDARTLARI) ---
+  // 1. Plaka Birim Fiyatı Seçimi
+  const price18PerSheet = isPlywood
+    ? prices.sheet18Plywood
+    : params.materialType === "whiteStudio"
+    ? prices.sheet18White
+    : prices.sheet18ColorWood;
+
+  const price8PerSheet =
+    params.materialType === "whiteStudio"
+      ? prices.sheet8White
+      : prices.sheet8Color;
+
+  const material18Cost = stdSheets * price18PerSheet;
+  const material8Cost = stdSheets8mm * price8PerSheet;
+  const totalMaterialCost = material18Cost + material8Cost;
+
+  // 2. Ebatlama & CNC Kesim Maliyeti
+  const cuttingCncCost =
+    stdSheets * prices.cuttingCnc18 + stdSheets8mm * prices.cuttingCnc8;
+
+  // 3. PVC Kenar Bandı Maliyeti (1mm PVC çekim dahil)
+  const roundedBandingMeters = Math.ceil(edgeBandingMeters * 1.1); // %10 pay
+  const edgeBandingCost = roundedBandingMeters * prices.edgeBandingPerMeter;
+
+  // 4. Aksesuar ve Donanım Maliyeti
+  const hardwareCost =
+    hinges * prices.hingeSoftClose +
+    slides * prices.slideTandem +
+    handles * prices.handle +
+    legs * prices.leg +
+    hangerRods * prices.hangerRod;
+
+  // 5. Atölye Toplama İşçiliği (Minifikssiz kavela + tutkal presli üretim)
+  const workshopLaborCost = stdSheets * prices.workshopAssemblyPerSheet;
+
+  // 6. Şantiye Montaj İşçiliği (%10)
+  // Taban üretim maliyeti üzerinden montaj işçiliği
+  const baseProductionCost =
+    totalMaterialCost +
+    cuttingCncCost +
+    edgeBandingCost +
+    hardwareCost +
+    workshopLaborCost;
+
+  const siteInstallationCost = Math.round(
+    baseProductionCost * (prices.siteInstallationPercent / 100)
+  );
+
+  // 7. Nakliye Bedeli
+  // options.shippingShare belirtilmişse onu kullanır; options.includeShippingInItem ise prices.shippingFeeTL kullanır; yoksa 0 (proje toplamında 1 kez eklenir)
+  const shippingCost =
+    options?.shippingShare !== undefined
+      ? options.shippingShare
+      : options?.includeShippingInItem
+      ? prices.shippingFeeTL
+      : 0;
+
+  // 8. Net Üretim Maliyeti (Kârsız)
+  const totalNetCost = baseProductionCost + siteInstallationCost + shippingCost;
+
+  // 9. Müşteri Teklif / Satış Fiyatı (Örn: %35 kâr marjı)
+  const profitAmount = Math.round(
+    totalNetCost * (prices.profitMarginPercent / 100)
+  );
+  const customerPrice = totalNetCost + profitAmount;
+
+  const hardware: HardwareBreakdown = {
+    hinges,
+    slides,
+    handles,
+    legs,
+    hangerRods,
+  };
+
+  const cost: CostBreakdown = {
+    material18Cost,
+    material8Cost,
+    totalMaterialCost,
+    cuttingCncCost,
+    edgeBandingCost,
+    hardwareCost,
+    workshopLaborCost,
+    baseProductionCost,
+    siteInstallationCost,
+    shippingCost,
+    totalNetCost,
+    profitAmount,
+    customerPrice,
+  };
+
   return {
     panelCount,
     backPanelCount,
@@ -239,9 +510,13 @@ export function calculateProductionMetrics(params: FurnitureParams): ProductionM
     surfaceArea8mm: Number(area8.toFixed(2)),
     totalSurfaceArea: Number((netArea18 + area8).toFixed(2)),
     stdSheets,
+    stdSheets8mm,
     sheetArea,
     sheetLabel,
     isPlywood,
     estimatedWeight,
+    edgeBandingMeters: roundedBandingMeters,
+    hardware,
+    cost,
   };
 }
