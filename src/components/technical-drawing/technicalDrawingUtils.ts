@@ -176,9 +176,8 @@ export function getKitchenData(params: FurnitureParams): KitchenDrawingData {
   const plinthH = params.baseType === "floating" ? 0 : (params.plinthHeight ?? 80);
   const hasCountertop = Boolean(params.hasCountertop);
   const countertopThick = hasCountertop ? (params.countertopThickness ?? params.tableTopThickness ?? 30) : 0;
-  const splashH = params.backsplashHeight ?? (wallUnits.length > 0 && wallUnits[0].bottomOffset !== undefined
-    ? wallUnits[0].bottomOffset
-    : 600); // Standard 600mm backsplash clearance gap (Turkish standard tezgah arası)
+  const wallClearanceUnit = wallUnits.find((u) => u.bottomOffset !== undefined);
+  const splashH = wallClearanceUnit?.bottomOffset ?? params.backsplashHeight ?? 600; // Standard 600mm backsplash clearance gap (Turkish standard tezgah arası)
 
   const STD_BASE_DEPTH = 600;
   const STD_WALL_DEPTH = 350;
@@ -684,7 +683,7 @@ export function generateFrontElevation(params: FurnitureParams, unit: "mm" | "cm
       let splashSegIdx = 0;
 
       kd.run0BaseUnits.forEach((u) => {
-        const uHasSplash = u.type !== "tall" && u.type !== "fridge" && !u.hasNoCountertop;
+        const uHasSplash = u.type !== "tall" && u.type !== "fridge";
         if (uHasSplash) {
           if (segStartX === null) {
             segStartX = runningX;

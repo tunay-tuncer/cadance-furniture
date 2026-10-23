@@ -18,6 +18,8 @@ import {
   MdViewAgenda,
   MdSwapHoriz,
   MdSwapVert,
+  MdVisibility,
+  MdVisibilityOff,
 } from "react-icons/md";
 import styles from "./modeler.module.css";
 import CadNumberInput from "./CadNumberInput";
@@ -284,6 +286,24 @@ export default function CadActionToolbar({ params, setParams }: CadActionToolbar
         <div className={styles.cadActionDivider} />
 
         {/* 3D Action Tools */}
+        {selectedUnit && (
+          <button
+            type="button"
+            onClick={() => {
+              setParams((prev) => ({
+                ...prev,
+                isolatedUnitId: prev.isolatedUnitId === selectedUnit.id ? undefined : selectedUnit.id,
+              }));
+            }}
+            className={`${styles.cadActionBtn} ${params.isolatedUnitId === selectedUnit.id ? styles.cadActionBtnActive : ""}`}
+            style={params.isolatedUnitId === selectedUnit.id ? { color: "#38bdf8", borderColor: "#38bdf8" } : {}}
+            title={params.isolatedUnitId === selectedUnit.id ? "Show all cabinets" : "Isolate cabinet (hide everything else)"}
+          >
+            {params.isolatedUnitId === selectedUnit.id ? <MdVisibilityOff size={15} /> : <MdVisibility size={15} />}
+            <span>{params.isolatedUnitId === selectedUnit.id ? "Exit Isolate" : "Isolate"}</span>
+          </button>
+        )}
+
         <button
           type="button"
           onClick={toggleDoors}

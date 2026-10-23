@@ -173,7 +173,9 @@ export interface FurnitureParams {
   // Kitchen Cabinet Assembly Multi-Unit System
   kitchenUnits?: KitchenCabinetUnit[];
   selectedUnitId?: string;
+  isolatedUnitId?: string; // When set, isolate (hide everything else) this cabinet unit
   onSelectUnit?: (id: string) => void;
+  onIsolateUnit?: (id?: string) => void;
   onAddAdjacentUnit?: (sourceId: string, direction: "left" | "right" | "top") => void;
 
   // Wardrobe Multi-Section Modular System
@@ -198,10 +200,10 @@ export function getFurnitureAssemblyDimensions(params: FurnitureParams) {
     const units: KitchenCabinetUnit[] = params.kitchenUnits && params.kitchenUnits.length > 0
       ? params.kitchenUnits
       : [
-          { id: "base-1", name: "Base Cabinet 1", type: "base", width: 600, height: 720, depth: 600, doorType: "singleLeft", drawerCount: 0, internalShelves: 2, handleType: "bar", handleFinish: "black" },
-          { id: "base-2", name: "Base Cabinet 2", type: "base", width: 800, height: 720, depth: 600, doorType: "double", drawerCount: 0, internalShelves: 2, handleType: "bar", handleFinish: "black" },
-          { id: "wall-1", name: "Upper Wall Cabinet 1", type: "wall", width: 600, height: 720, depth: 350, doorType: "singleLeft", drawerCount: 0, internalShelves: 2, handleType: "bar", handleFinish: "black", bottomOffset: 600 },
-          { id: "wall-2", name: "Upper Wall Cabinet 2", type: "wall", width: 800, height: 720, depth: 350, doorType: "double", drawerCount: 0, internalShelves: 2, handleType: "bar", handleFinish: "black", bottomOffset: 600 },
+          { id: "base-1", name: "Base Cabinet 1", type: "base", width: 600, height: 720, depth: 600, doorType: "singleLeft", drawerCount: 0, internalShelves: 1, handleType: "bar", handleFinish: "black" },
+          { id: "base-2", name: "Base Cabinet 2", type: "base", width: 800, height: 720, depth: 600, doorType: "double", drawerCount: 0, internalShelves: 1, handleType: "bar", handleFinish: "black" },
+          { id: "wall-1", name: "Upper Wall Cabinet 1", type: "wall", width: 600, height: 720, depth: 350, doorType: "singleLeft", drawerCount: 0, internalShelves: 1, handleType: "bar", handleFinish: "black", bottomOffset: 600 },
+          { id: "wall-2", name: "Upper Wall Cabinet 2", type: "wall", width: 800, height: 720, depth: 350, doorType: "double", drawerCount: 0, internalShelves: 1, handleType: "bar", handleFinish: "black", bottomOffset: 600 },
         ];
     const baseUnits = units.filter((unit) => unit.type !== "wall" && unit.type !== "corner-wall");
     const wallUnits = units.filter((unit) => unit.type === "wall" || unit.type === "corner-wall");
@@ -257,6 +259,7 @@ interface FurnitureMeshProps {
   onModelReady?: () => void;
   onSelectUnit?: (id: string) => void;
   onSelectUnits?: (ids: string[]) => void;
+  onIsolateUnit?: (id?: string) => void;
   onAddAdjacentUnit?: (sourceId: string, direction: "left" | "right" | "top") => void;
   onSelectWardrobeUnit?: (id: string) => void;
   onAddAdjacentWardrobeUnit?: (sourceId: string, direction: "left" | "right" | "top") => void;
@@ -326,6 +329,7 @@ export default function FurnitureMesh({
   onModelReady,
   onSelectUnit,
   onSelectUnits: propOnSelectUnits,
+  onIsolateUnit: propOnIsolateUnit,
   onAddAdjacentUnit,
   onSelectWardrobeUnit,
   onAddAdjacentWardrobeUnit,
@@ -345,6 +349,8 @@ export default function FurnitureMesh({
   const selectedDivisions = params.selectedDivisions;
   const activeTool = params.activeTool || "select";
   const onSelectUnits = propOnSelectUnits || params.onSelectUnits;
+  const onIsolateUnit = propOnIsolateUnit || params.onIsolateUnit;
+  const isolatedUnitId = params.isolatedUnitId;
   const [hoveredSnap, setHoveredSnap] = useState<{ unitId: string; side: "left" | "right" | "top" } | null>(null);
   const {
     width,
@@ -375,7 +381,7 @@ export default function FurnitureMesh({
     handleType = "bar",
     handleFinish = "black",
     internalColumns = 1,
-    internalShelves = category === "Shelf" ? 3 : 2,
+    internalShelves = 1,
     shelfLayout = "grid",
     shelfColumnOffsets,
     shelfRowOffsets,
@@ -1483,7 +1489,7 @@ export default function FurnitureMesh({
         depth: 600,
         doorType: "singleLeft",
         drawerCount: 0,
-        internalShelves: 2,
+        internalShelves: 1,
         handleType: "bar",
         handleFinish: "black",
       },
@@ -1496,7 +1502,7 @@ export default function FurnitureMesh({
         depth: 600,
         doorType: "double",
         drawerCount: 0,
-        internalShelves: 2,
+        internalShelves: 1,
         handleType: "bar",
         handleFinish: "black",
       },
@@ -1509,7 +1515,7 @@ export default function FurnitureMesh({
         depth: 350,
         doorType: "singleLeft",
         drawerCount: 0,
-        internalShelves: 2,
+        internalShelves: 1,
         handleType: "bar",
         handleFinish: "black",
       },
@@ -1522,7 +1528,7 @@ export default function FurnitureMesh({
         depth: 350,
         doorType: "double",
         drawerCount: 0,
-        internalShelves: 2,
+        internalShelves: 1,
         handleType: "bar",
         handleFinish: "black",
       },
@@ -1751,29 +1757,7 @@ export default function FurnitureMesh({
       }
     }
 
-    // Keep unlinked wall runs centered over the corresponding base run. Explicit
-    // anchors are resolved afterwards so the model remains editable without the
-    // old independent, left-origin wall cursor behavior.
-    for (const runIndex of [0, 1]) {
-      const freeItems = layoutWallItems.filter((item) =>
-        !item.unit.mountedAboveUnitId && !item.isCorner && item.runIndex === runIndex
-      );
-      const baseItemsForRun = layoutBaseItems.filter((item) => item.runIndex === runIndex && !item.isCorner);
-      if (freeItems.length === 0) continue;
-      const axis = runIndex === 0 ? 0 : 2;
-      const halfSpan = (item: BaseLayoutItem | WallLayoutItem) => item.uW / 2;
-      const freeMin = Math.min(...freeItems.map((item) => item.pos[axis] - halfSpan(item)));
-      const freeMax = Math.max(...freeItems.map((item) => item.pos[axis] + halfSpan(item)));
-      const targetMin = baseItemsForRun.length > 0
-        ? Math.min(...baseItemsForRun.map((item) => item.pos[axis] - halfSpan(item)))
-        : 0;
-      const targetMax = baseItemsForRun.length > 0
-        ? Math.max(...baseItemsForRun.map((item) => item.pos[axis] + halfSpan(item)))
-        : 0;
-      const shift = (targetMin + targetMax - freeMin - freeMax) / 2;
-      for (const item of freeItems) item.pos[axis] += shift;
-    }
-
+    // Resolve explicitly anchored wall units first so their exact positions are established
     const placeAnchoredWall = (item: WallLayoutItem, visited = new Set<string>()): void => {
       const anchorId = item.unit.mountedAboveUnitId;
       if (!anchorId || visited.has(item.unit.id)) return;
@@ -1806,7 +1790,49 @@ export default function FurnitureMesh({
       item.runIndex = anchor.runIndex;
       item.isCorner = item.unit.type === "corner-wall";
     };
-    for (const item of layoutWallItems) placeAnchoredWall(item);
+    for (const item of layoutWallItems) {
+      if (item.unit.mountedAboveUnitId) {
+        placeAnchoredWall(item);
+      }
+    }
+
+    // Now position unanchored ("free") wall items:
+    // If anchored wall units already exist on the run, append free units cleanly adjacent to them
+    // (at the right or forward end) rather than blindly centering them into the middle of existing cabinets.
+    // If no anchored wall units exist on that run, center the free wall run over the corresponding base run.
+    for (const runIndex of [0, 1]) {
+      const freeItems = layoutWallItems.filter((item) =>
+        !item.unit.mountedAboveUnitId && !item.isCorner && item.runIndex === runIndex
+      );
+      if (freeItems.length === 0) continue;
+      const anchoredOnRun = layoutWallItems.filter((item) =>
+        Boolean(item.unit.mountedAboveUnitId) && item.runIndex === runIndex
+      );
+      const baseItemsForRun = layoutBaseItems.filter((item) => item.runIndex === runIndex && !item.isCorner);
+      const axis = runIndex === 0 ? 0 : 2;
+      const halfSpan = (item: BaseLayoutItem | WallLayoutItem) => item.uW / 2;
+
+      if (anchoredOnRun.length > 0) {
+        // Find maximum edge of anchored items along the run axis
+        const maxAnchoredEdge = Math.max(...anchoredOnRun.map((item) => item.pos[axis] + halfSpan(item)));
+        let cursor = maxAnchoredEdge;
+        for (const item of freeItems) {
+          item.pos[axis] = cursor + halfSpan(item);
+          cursor += item.uW;
+        }
+      } else {
+        const freeMin = Math.min(...freeItems.map((item) => item.pos[axis] - halfSpan(item)));
+        const freeMax = Math.max(...freeItems.map((item) => item.pos[axis] + halfSpan(item)));
+        const targetMin = baseItemsForRun.length > 0
+          ? Math.min(...baseItemsForRun.map((item) => item.pos[axis] - halfSpan(item)))
+          : 0;
+        const targetMax = baseItemsForRun.length > 0
+          ? Math.max(...baseItemsForRun.map((item) => item.pos[axis] + halfSpan(item)))
+          : 0;
+        const shift = (targetMin + targetMax - freeMin - freeMax) / 2;
+        for (const item of freeItems) item.pos[axis] += shift;
+      }
+    }
 
     // Centering calculation: offset entire assembly so visual center is at (0, 0, 0)
     let bMinX = Infinity, bMaxX = -Infinity, bMinZ = Infinity, bMaxZ = -Infinity;
@@ -1853,15 +1879,24 @@ export default function FurnitureMesh({
     const centerOffZ = (bMinZ + bMaxZ) / 2;
 
     // Apply centering offset to base items and wall items
-    const centeredBaseItems = layoutBaseItems.map((item) => ({
+    const allCenteredBaseItems = layoutBaseItems.map((item) => ({
       ...item,
       pos: [item.pos[0] - centerOffX, item.pos[1], item.pos[2] - centerOffZ] as [number, number, number],
     }));
 
-    const centeredWallItems = layoutWallItems.map((item) => ({
+    const allCenteredWallItems = layoutWallItems.map((item) => ({
       ...item,
       pos: [item.pos[0] - centerOffX, item.pos[1], item.pos[2] - centerOffZ] as [number, number, number],
     }));
+
+    // If a unit is isolated, only render that specific unit
+    const centeredBaseItems = isolatedUnitId
+      ? allCenteredBaseItems.filter((item) => item.unit.id === isolatedUnitId)
+      : allCenteredBaseItems;
+
+    const centeredWallItems = isolatedUnitId
+      ? allCenteredWallItems.filter((item) => item.unit.id === isolatedUnitId)
+      : allCenteredWallItems;
 
     // Multi-Selection helper handler
     const handleUnitSelect = (e: { stopPropagation: () => void; shiftKey?: boolean }, unitId: string) => {
@@ -2056,14 +2091,15 @@ export default function FurnitureMesh({
         {centeredBaseItems.length > 0 && params.hasBacksplash && (
           <group>
             {(() => {
-              const splashH = (params.backsplashHeight ?? (wallUnits.length > 0 && wallUnits[0].bottomOffset !== undefined ? wallUnits[0].bottomOffset : 600)) / 1000;
+              const wallClearanceUnit = wallUnits.find((u) => u.bottomOffset !== undefined);
+              const splashH = ((wallClearanceUnit?.bottomOffset ?? params.backsplashHeight) ?? 600) / 1000;
               const splashThick = 0.018;
 
               return (
                 <group>
                   {centeredBaseItems.map((item, bi) => {
-                    // Do NOT apply cover wall / backsplash to fridge modules, tall cabinets, or units without countertop
-                    if (item.unit.type === "tall" || item.unit.type === "fridge" || item.unit.hasNoCountertop) {
+                    // Do NOT apply cover wall / backsplash to fridge modules or tall cabinets
+                    if (item.unit.type === "tall" || item.unit.type === "fridge") {
                       return null;
                     }
                     const ctThick = (params.countertopThickness ?? tableTopThickness ?? 30) / 1000;
@@ -2261,7 +2297,7 @@ export default function FurnitureMesh({
                       </mesh>
 
                       {/* Solid Back Wall 1 (along X) */}
-                      {(unit.hasBackPanel !== false) && (
+                      {(unit.hasBackPanel !== undefined ? unit.hasBackPanel : hasBackPanel) !== false && (
                         <mesh position={[0, uH / 2, -uD / 2 + 0.005]} material={uMat}>
                           <boxGeometry args={[uW - t * 2, uH - t * 2, 0.01]} />
                           <Edges threshold={15} color={edgeColor} />
@@ -2269,7 +2305,7 @@ export default function FurnitureMesh({
                       )}
 
                       {/* Solid Back Wall 2 (along Z) */}
-                      {(unit.hasBackPanel !== false) && (
+                      {(unit.hasBackPanel !== undefined ? unit.hasBackPanel : hasBackPanel) !== false && (
                         <mesh position={[uW / 2 - 0.005, uH / 2, 0]} material={uMat}>
                           <boxGeometry args={[0.01, uH - t * 2, uD - t * 2]} />
                           <Edges threshold={15} color={edgeColor} />
@@ -2555,7 +2591,7 @@ export default function FurnitureMesh({
                 </>
               )}
               {/* 8mm Back Panel (Arkalık: inset 18mm from rear edge in grooved channel) */}
-              {(unit.hasBackPanel !== false) && (
+              {(unit.hasBackPanel !== undefined ? unit.hasBackPanel : hasBackPanel) !== false && (
                 <mesh position={[0, uH / 2, -uD / 2 + 0.018 + 0.004]} material={uMat}>
                   <boxGeometry args={[uW - t * 2, uH - t * 2, 0.008]} />
                   <Edges threshold={15} color={edgeColor} />
@@ -3106,7 +3142,7 @@ export default function FurnitureMesh({
                         </mesh>
 
                         {/* 8mm Back Wall 1 (along X, recessed 18mm) */}
-                        {unit.hasBackPanel !== false && (
+                        {(unit.hasBackPanel !== undefined ? unit.hasBackPanel : hasBackPanel) !== false && (
                           <mesh position={[0, uH / 2, -uD / 2 + 0.018 + 0.004]} material={uMat}>
                             <boxGeometry args={[uW - t * 2, uH - t * 2, 0.008]} />
                             <Edges threshold={15} color={edgeColor} />
@@ -3114,7 +3150,7 @@ export default function FurnitureMesh({
                         )}
 
                         {/* 8mm Back Wall 2 (along Z, recessed 18mm) */}
-                        {unit.hasBackPanel !== false && (
+                        {(unit.hasBackPanel !== undefined ? unit.hasBackPanel : hasBackPanel) !== false && (
                           <mesh position={[uW / 2 - 0.018 - 0.004, uH / 2, 0]} material={uMat}>
                             <boxGeometry args={[0.008, uH - t * 2, uD - t * 2]} />
                             <Edges threshold={15} color={edgeColor} />
@@ -3280,10 +3316,12 @@ export default function FurnitureMesh({
                     </mesh>
                   )}
                   {/* 8mm Back Panel (Arkalık: inset 18mm from rear edge) */}
-                  <mesh position={[0, uH / 2, -uD / 2 + 0.018 + 0.004]} material={uMat}>
-                    <boxGeometry args={[uW - t * 2, uH - t * 2, 0.008]} />
-                    <Edges threshold={15} color={edgeColor} />
-                  </mesh>
+                  {(unit.hasBackPanel !== undefined ? unit.hasBackPanel : hasBackPanel) !== false && (
+                    <mesh position={[0, uH / 2, -uD / 2 + 0.018 + 0.004]} material={uMat}>
+                      <boxGeometry args={[uW - t * 2, uH - t * 2, 0.008]} />
+                      <Edges threshold={15} color={edgeColor} />
+                    </mesh>
+                  )}
 
                   {/* Wall Internal Shelves */}
                   {unit.internalShelves > 0 &&
@@ -3480,13 +3518,44 @@ export default function FurnitureMesh({
             </group>
           );
         })}
+
+        {/* Floating 3D Exit Isolation Mode button */}
+        {isolatedUnitId && (
+          <Html position={[0, maxBaseH + effectiveCtH + 0.35, 0]} center>
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                onIsolateUnit?.(undefined);
+              }}
+              style={{
+                background: "rgba(15, 23, 42, 0.92)",
+                backdropFilter: "blur(8px)",
+                border: "1px solid rgba(56, 189, 248, 0.6)",
+                borderRadius: "8px",
+                padding: "6px 14px",
+                color: "#38bdf8",
+                fontSize: "12px",
+                fontWeight: 700,
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                cursor: "pointer",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.45)",
+                whiteSpace: "nowrap",
+              }}
+              title="Show all cabinets"
+            >
+              <span>👁️ Exit Isolation Mode</span>
+            </div>
+          </Html>
+        )}
       </group>
     );
   };
   // 3. SHELF RENDERER (Supports Plinth / Legs, Single Cell Division Selection & Box Selection)
   const renderShelf = () => {
     const cols = Math.max(1, Math.min(5, internalColumns || 2));
-    const rows = internalShelves === 0 ? 0 : Math.max(1, Math.min(6, internalShelves ?? 3));
+    const rows = internalShelves === 0 ? 0 : Math.max(1, Math.min(6, internalShelves ?? 1));
     const bayW = (w - (cols + 1) * t) / cols;
 
     const plinthH = baseType === "floating" ? 0 : (plinthHeight ?? 80) / 1000;
@@ -4051,9 +4120,11 @@ export default function FurnitureMesh({
                   <Edges threshold={15} color={isSelected ? "#38bdf8" : edgeColor} />
                 </mesh>
                 {/* 8mm Back Panel (Arkalık: inset 18mm from rear edge) */}
-                <mesh position={[0, uH / 2, -uD / 2 + 0.018 + 0.004]} material={uMat}>
-                  <boxGeometry args={[uW - t * 2, uH - t * 2, 0.008]} />
-                </mesh>
+                {hasBackPanel !== false && (
+                  <mesh position={[0, uH / 2, -uD / 2 + 0.018 + 0.004]} material={uMat}>
+                    <boxGeometry args={[uW - t * 2, uH - t * 2, 0.008]} />
+                  </mesh>
+                )}
 
                 {/* Full-width Structural Divider Board above drawers (for BOTH externalBottom and internal drawers) */}
                 {hasDrawers && totalDrawerHeight > 0 && (
@@ -4944,9 +5015,11 @@ export default function FurnitureMesh({
                 </mesh>
 
                 {/* 8mm Back Panel (18mm inset from rear) */}
-                <mesh position={[0, uH / 2, -uD / 2 + 0.018 + 0.004]} material={topUMat}>
-                  <boxGeometry args={[uW - t * 2, uH - t * 2, 0.008]} />
-                </mesh>
+                {hasBackPanel !== false && (
+                  <mesh position={[0, uH / 2, -uD / 2 + 0.018 + 0.004]} material={topUMat}>
+                    <boxGeometry args={[uW - t * 2, uH - t * 2, 0.008]} />
+                  </mesh>
+                )}
 
                 {/* Full-Overlay Door (2mm reveal top and bottom) */}
                 {topU.doorType !== "open" && (

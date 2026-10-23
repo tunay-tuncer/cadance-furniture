@@ -27,6 +27,8 @@ import {
   MdScreenRotation,
   MdEditNote,
   MdClose,
+  MdVisibility,
+  MdVisibilityOff,
 } from "react-icons/md";
 import styles from "./modeler.module.css";
 import { TechnicalDrawingSettings } from "./FurnitureMesh";
@@ -153,7 +155,14 @@ export default function ModelerControls({
     const isCorner = type === "corner-base" || type === "corner-wall";
     const existingCount = kitchenUnits.filter((u) => u.type === type).length;
     const wallAnchor = type === "wall"
-      ? (selectedUnit || kitchenUnits.find((unit) => unit.type === "base" || unit.type === "fridge" || unit.type === "tall"))
+      ? (selectedUnit?.type === "base" || selectedUnit?.type === "fridge" || selectedUnit?.type === "tall"
+          ? selectedUnit
+          : (selectedUnit?.type === "wall"
+              ? selectedUnit // stack as second layer
+              : (kitchenUnits.find((unit) =>
+                  (unit.type === "base" || unit.type === "fridge" || unit.type === "tall") &&
+                  !kitchenUnits.some((w) => w.mountedAboveUnitId === unit.id)
+                ) || undefined)))
       : undefined;
     let resolvedRunAxis: "run0" | "run1" | undefined = runAxis;
     if (type === "wall" && !resolvedRunAxis) {
@@ -193,17 +202,17 @@ export default function ModelerControls({
       mountedAboveUnitId: type === "wall" ? wallAnchor?.id : undefined,
       orientation: isCorner ? "corner-right" : "straight",
       materialType: selectedUnit?.materialType || params.materialType,
-      width: type === "corner-base" ? 900 : type === "corner-wall" ? 600 : type === "fridge" ? 700 : (type === "wall" && wallAnchor) ? wallAnchor.width : 600,
+      width: type === "corner-base" ? 900 : type === "corner-wall" ? 600 : type === "fridge" ? 800 : (type === "wall" && wallAnchor) ? wallAnchor.width : 600,
       height: type === "tall" ? 2100 : type === "fridge" ? 2000 : isFridgeTop ? 420 : isSecondWallLayer ? 450 : 720,
-      depth: type === "corner-base" ? 900 : type === "corner-wall" ? 600 : (type === "base" || type === "tall" || type === "dishwasher") ? 600 : type === "fridge" ? 650 : isFridgeTop ? wallAnchor.depth : 350,
+      depth: type === "corner-base" ? 900 : type === "corner-wall" ? 600 : (type === "base" || type === "tall" || type === "dishwasher") ? 600 : type === "fridge" ? 800 : isFridgeTop ? wallAnchor.depth : 350,
       cornerDepth: isCorner ? (type === "corner-wall" ? 350 : 600) : undefined,
       bottomOffset: (type === "wall" || type === "corner-wall") && !isFridgeTop && !isSecondWallLayer ? 600 : undefined,
-      doorType: isCorner ? "cornerDouble" : (type === "tall" ? "double" : "singleLeft"),
+      doorType: isCorner ? "cornerDouble" : type === "fridge" ? "none" : (type === "tall" ? "double" : "singleLeft"),
       doorStyle: selectedUnit?.doorStyle || "slab",
       hasNoBottom: type === "fridge" || type === "dishwasher",
       hasNoCountertop: type === "tall" || type === "fridge",
       drawerCount: 0,
-      internalShelves: isCorner ? (type === "corner-wall" ? 2 : 1) : (type === "tall" ? 4 : (type === "fridge" || type === "dishwasher" ? 0 : 2)),
+      internalShelves: isCorner ? (type === "corner-wall" ? 1 : 1) : (type === "tall" ? 4 : (type === "fridge" || type === "dishwasher" ? 0 : 1)),
       handleType: selectedUnit?.handleType || "bar",
       handleFinish: selectedUnit?.handleFinish || "black",
     };
@@ -804,33 +813,56 @@ export default function ModelerControls({
                             </span>
                             <span className={styles.treeUnitDim}>({u.width}×{u.height}×{u.depth}mm)</span>
                           </div>
-                          <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                            {isMulti && <span className={styles.treeActiveBadge}>SELECTED</span>}
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.25rem", flexShrink: 0 }}>
+                            {isMulti && <span className={styles.treeActiveBadge}>Selected</span>}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setParams((prev) => ({
+                                  ...prev,
+                                  isolatedUnitId: prev.isolatedUnitId === u.id ? undefined : u.id,
+                                }));
+                              }}
+                              style={{
+                                background: params.isolatedUnitId === u.id ? "rgba(56, 189, 248, 0.2)" : "transparent",
+                                border: params.isolatedUnitId === u.id ? "1px solid rgba(56, 189, 248, 0.5)" : "none",
+                                borderRadius: "4px",
+                                color: params.isolatedUnitId === u.id ? "#38bdf8" : "#94a3b8",
+                                cursor: "pointer",
+                                padding: "2px",
+                                display: "flex",
+                                alignItems: "center",
+                              }}
+                              title={params.isolatedUnitId === u.id ? "Show all cabinets" : "Isolate cabinet (hide everything else)"}
+                            >
+                              {params.isolatedUnitId === u.id ? <MdVisibilityOff size={14} /> : <MdVisibility size={14} />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                duplicateSelectedUnit();
+                              }}
+                              style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", padding: "2px" }}
+                              title="Duplicate cabinet"
+                            >
+                              <MdContentCopy size={13} />
+                            </button>
+                            {kitchenUnits.length > 1 && (
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  duplicateSelectedUnit();
+                                  deleteSelectedUnit();
                                 }}
-                                style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", padding: "2px" }}
-                                title="Duplicate cabinet"
+                                style={{ background: "transparent", border: "none", color: "#f87171", cursor: "pointer", padding: "2px" }}
+                                title="Delete cabinet"
                               >
-                                <MdContentCopy size={13} />
-                              </button>
-                              {kitchenUnits.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    deleteSelectedUnit();
-                                  }}
-                                  style={{ background: "transparent", border: "none", color: "#f87171", cursor: "pointer", padding: "2px" }}
-                                  title="Delete cabinet"
-                                >
                                 <MdDeleteOutline size={14} />
                               </button>
-                              )}
-                            </div>
+                            )}
+                          </div>
                         </div>
 
                         {/* Nested Divisions (Shown for Selected Unit) */}
@@ -1121,7 +1153,7 @@ export default function ModelerControls({
                             <span className={styles.treeUnitDim}>({u.width}×{u.height}×{u.depth}mm)</span>
                           </div>
                           {isSelected && (
-                            <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", flexShrink: 0 }}>
                               <span className={styles.treeActiveBadge}>ACTIVE</span>
                               <button
                                 type="button"
@@ -1466,6 +1498,57 @@ export default function ModelerControls({
                 </>
               ) : params.category === "Cabinet" && selectedUnit ? (
                 <>
+                  {/* Cabinet Name & Quick Isolation Banner */}
+                  <div className={styles.controlGroup}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+                      <label className={styles.groupLabel} style={{ marginBottom: 0 }}>Cabinet Name</label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setParams((prev) => ({
+                            ...prev,
+                            isolatedUnitId: prev.isolatedUnitId === selectedUnit.id ? undefined : selectedUnit.id,
+                          }));
+                        }}
+                        style={{
+                          background: params.isolatedUnitId === selectedUnit.id ? "rgba(56, 189, 248, 0.2)" : "rgba(255, 255, 255, 0.05)",
+                          border: params.isolatedUnitId === selectedUnit.id ? "1px solid #38bdf8" : "1px solid rgba(255, 255, 255, 0.12)",
+                          borderRadius: "4px",
+                          color: params.isolatedUnitId === selectedUnit.id ? "#38bdf8" : "#94a3b8",
+                          padding: "3px 8px",
+                          fontSize: "0.72rem",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "5px",
+                        }}
+                        title={params.isolatedUnitId === selectedUnit.id ? "Show all cabinets" : "Hide everything else"}
+                      >
+                        {params.isolatedUnitId === selectedUnit.id ? <MdVisibilityOff size={13} /> : <MdVisibility size={13} />}
+                        <span>{params.isolatedUnitId === selectedUnit.id ? "Isolated" : "Isolate"}</span>
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={selectedUnit.name || ""}
+                      onChange={(e) => updateSelectedUnit({ name: e.target.value })}
+                      placeholder="e.g. Sink Unit, Cooktop Base, Top Cabinet"
+                      style={{
+                        width: "100%",
+                        padding: "0.5rem 0.65rem",
+                        background: "#111827",
+                        color: "#f8fafc",
+                        border: "1px solid rgba(148, 163, 184, 0.25)",
+                        borderRadius: "6px",
+                        fontSize: "0.82rem",
+                        fontWeight: 500,
+                        outline: "none",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </div>
+
                   {/* Cabinet Type & Run Orientation Switcher */}
                   <div className={styles.controlGroup}>
                     <label className={styles.groupLabel}>Cabinet Type & Orientation</label>
@@ -1497,9 +1580,11 @@ export default function ModelerControls({
                               updateSelectedUnit({
                                 type: "fridge",
                                 orientation: "straight",
-                                width: selectedUnit.width < 600 ? 700 : selectedUnit.width,
-                                height: selectedUnit.height < 1200 ? 2000 : selectedUnit.height,
-                                depth: selectedUnit.depth < 500 ? 650 : selectedUnit.depth,
+                                width: 800,
+                                height: 2000,
+                                depth: 800,
+                                doorType: "none",
+                                internalShelves: 0,
                                 hasNoBottom: true,
                                 hasNoCountertop: true,
                               });
@@ -1766,7 +1851,10 @@ export default function ModelerControls({
                         <span className={styles.sliderName}>Distance from Bottom Cabinet</span>
                         <CadNumberInput
                           value={selectedUnit.bottomOffset ?? 600}
-                          onChange={(val) => updateSelectedUnit({ bottomOffset: val })}
+                          onChange={(val) => {
+                            updateSelectedUnit({ bottomOffset: val });
+                            updateParam("backsplashHeight", val);
+                          }}
                           min={250}
                           max={1100}
                           unit="mm"
@@ -1778,7 +1866,11 @@ export default function ModelerControls({
                         max={1100}
                         step={10}
                         value={selectedUnit.bottomOffset ?? 600}
-                        onChange={(e) => updateSelectedUnit({ bottomOffset: Number(e.target.value) })}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          updateSelectedUnit({ bottomOffset: val });
+                          updateParam("backsplashHeight", val);
+                        }}
                         className={styles.rangeSlider}
                       />
                       <div style={{ fontSize: "0.7rem", color: "#94a3b8", marginTop: "3px" }}>
@@ -2168,7 +2260,16 @@ export default function ModelerControls({
                   {/* Solid Back Board Toggle for Cabinets */}
                   <div
                     className={styles.toggleRow}
-                    onClick={() => updateParam("hasBackPanel", !params.hasBackPanel)}
+                    onClick={() => {
+                      const next = !(params.hasBackPanel !== false);
+                      setParams((prev) => ({
+                        ...prev,
+                        hasBackPanel: next,
+                        kitchenUnits: prev.kitchenUnits
+                          ? prev.kitchenUnits.map((u) => ({ ...u, hasBackPanel: next }))
+                          : prev.kitchenUnits,
+                      }));
+                    }}
                   >
                     <span className={styles.toggleLabel}>Solid Back Board</span>
                     <div
